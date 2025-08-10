@@ -721,9 +721,17 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                         📝 Changes Preview for Row R{String(rack?.rackNumber || 1).padStart(2, '0')} "{rack?.name}"
                       </Typography>
                       <Typography variant="body2">
-                        <strong>Current:</strong> {rack?.gridCount || rack?.shelfCount || 0} grids × {rack?.binsPerGrid || rack?.binsPerShelf || 0} bins = {(rack?.gridCount || rack?.shelfCount || 0) * (rack?.binsPerGrid || rack?.binsPerShelf || 0)} total bins
+                        <strong>Current:</strong> {rack?.gridCount || rack?.shelfCount || 0} grids × {((rack?.levelsPerGrid || ['A', 'B', 'C']).length * (rack?.binsPerLevel || 3))} bins/grid = {(rack?.gridCount || rack?.shelfCount || 0) * ((rack?.levelsPerGrid || ['A', 'B', 'C']).length * (rack?.binsPerLevel || 3))} total bins
                         <br />
-                        <strong>New:</strong> {previewData.gridCount} grids × {previewData.binsPerGrid} bins = {previewData.totalBins} total bins
+                        <Typography variant="caption" color="text.secondary" component="span">
+                          ({(rack?.levelsPerGrid || ['A', 'B', 'C']).length} levels × {rack?.binsPerLevel || 3} bins/level)
+                        </Typography>
+                        <br />
+                        <strong>New:</strong> {previewData.gridCount} grids × {previewData.binsPerGrid} bins/grid = {previewData.totalBins} total bins
+                        <br />
+                        <Typography variant="caption" color="text.secondary" component="span">
+                          ({(previewData.levelsPerGrid || []).length} levels × {previewData.binsPerLevel} bins/level)
+                        </Typography>
                         {previewData.totalBins > (rack?.totalBins || 0) && (
                           <span style={{ color: 'green' }}> (+{previewData.totalBins - (rack?.totalBins || 0)} bins will be added)</span>
                         )}
@@ -950,7 +958,10 @@ function RackDetailsDialog({ open, onClose, rack, bins }) {
               <Grid item xs={12} md={6}>
                 <Typography variant="body2" color="text.secondary">Configuration</Typography>
                 <Typography variant="body1">
-                  {rack.shelfCount} grids × {rack.binsPerShelf} bins = {rackBins.length} total bins
+                  {rack.gridCount || rack.shelfCount} grids × {((rack.levelsPerGrid || ['A', 'B', 'C']).length * (rack.binsPerLevel || 3))} bins/grid = {rackBins.length} total bins
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  ({(rack.levelsPerGrid || ['A', 'B', 'C']).length} levels × {rack.binsPerLevel || 3} bins per level)
                 </Typography>
               </Grid>
             </Grid>
@@ -1034,7 +1045,18 @@ function RackDetailsDialog({ open, onClose, rack, bins }) {
               Bins by Grid
             </Typography>
             {Object.keys(binsByShelf).sort((a, b) => parseInt(a) - parseInt(b)).map(gridNum => {
-              const gridBins = binsByShelf[gridNum].sort((a, b) => (a.position || 0) - (b.position || 0));
+              const gridBins = binsByShelf[gridNum].sort((a, b) => {
+                // Sort by level first (A, B, C, etc.), then by position (1, 2, 3, etc.)
+                const aLevel = a.level || (a.code ? a.code.split('-').pop()?.charAt(0) : 'A') || 'A';
+                const bLevel = b.level || (b.code ? b.code.split('-').pop()?.charAt(0) : 'A') || 'A';
+                
+                if (aLevel !== bLevel) {
+                  return aLevel.localeCompare(bLevel);
+                }
+                
+                // If same level, sort by position
+                return (a.position || 0) - (b.position || 0);
+              });
               const gridOccupied = gridBins.filter(bin => bin.currentQty > 0).length;
               const gridCapacity = gridBins.reduce((sum, bin) => sum + (parseInt(bin.capacity) || 0), 0);
               const gridUsed = gridBins.reduce((sum, bin) => sum + (parseInt(bin.currentQty) || 0), 0);
@@ -1157,14 +1179,19 @@ function RackCard({ rack, onEdit, onDelete, onPrint, onViewDetails }) {
         </Box>
 
         <Grid container spacing={2} sx={{ mb: 2 }}>
-          {/* <Grid item xs={6}>
-            <Typography variant="body2" color="text.secondary">
-              Number of Grids: {rack.shelfCount || 0}
-            </Typography>
-          </Grid> */}
           <Grid item xs={6}>
             <Typography variant="body2" color="text.secondary">
-              Bins/Grid: {rack.binsPerShelf}
+              Levels per Grid: {(rack.levelsPerGrid || ['A', 'B', 'C']).length} ({(rack.levelsPerGrid || ['A', 'B', 'C']).join(', ')})
+            </Typography>
+          </Grid>
+          <Grid item xs={6}>
+            <Typography variant="body2" color="text.secondary">
+              Bins per Level: {rack.binsPerLevel || 3}
+            </Typography>
+          </Grid>
+          <Grid item xs={6}>
+            <Typography variant="body2" color="text.secondary">
+              Bins per Grid: {((rack.levelsPerGrid || ['A', 'B', 'C']).length * (rack.binsPerLevel || 3))} ({(rack.levelsPerGrid || ['A', 'B', 'C']).length} × {rack.binsPerLevel || 3})
             </Typography>
           </Grid>
           <Grid item xs={6}>
@@ -1329,8 +1356,10 @@ export default function RackConfiguration() {
               <strong>Row Information:</strong><br>
               Name: ${rack.name}<br>
               Floor: ${rack.floor}<br>
-              Grids: ${rack.shelfCount}<br>
-              Bins per Grid: ${rack.binsPerShelf}<br>
+              Grids: ${rack.gridCount || rack.shelfCount}<br>
+              Levels per Grid: ${(rack.levelsPerGrid || ['A', 'B', 'C']).length} (${(rack.levelsPerGrid || ['A', 'B', 'C']).join(', ')})<br>
+              Bins per Level: ${rack.binsPerLevel || 3}<br>
+              Bins per Grid: ${((rack.levelsPerGrid || ['A', 'B', 'C']).length * (rack.binsPerLevel || 3))}<br>
               Total Bins: ${rackBins.length}
             </div>
             
@@ -1471,6 +1500,8 @@ export default function RackConfiguration() {
                 <TableCell>Name</TableCell>
                 <TableCell>Floor</TableCell>
                 <TableCell>Grids</TableCell>
+                <TableCell>Levels/Grid</TableCell>
+                <TableCell>Bins/Level</TableCell>
                 <TableCell>Bins/Grid</TableCell>
                 <TableCell>Total Bins</TableCell>
                 <TableCell>Occupied</TableCell>
@@ -1483,6 +1514,12 @@ export default function RackConfiguration() {
                 const rackBins = bins.filter(bin => bin.rackId === rack.id);
                 const occupiedBins = rackBins.filter(bin => bin.currentQty > 0);
                 const utilization = rackBins.length > 0 ? (occupiedBins.length / rackBins.length) * 100 : 0;
+                
+                // Calculate rack configuration values
+                const gridCount = rack.gridCount || rack.shelfCount || 0;
+                const levelsPerGrid = rack.levelsPerGrid || ['A', 'B', 'C'];
+                const binsPerLevel = rack.binsPerLevel || 3;
+                const binsPerGrid = levelsPerGrid.length * binsPerLevel;
                 
                 return (
                   <TableRow key={rack.id}>
@@ -1510,8 +1547,24 @@ export default function RackConfiguration() {
                     <TableCell>
                       <Chip label={rack.floor} size="small" color="primary" />
                     </TableCell>
-                    <TableCell>{rack.shelfCount}</TableCell>
-                    <TableCell>{rack.binsPerShelf}</TableCell>
+                    <TableCell>{gridCount}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {levelsPerGrid.length}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ({levelsPerGrid.join(', ')})
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{binsPerLevel}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight="medium">
+                        {binsPerGrid}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ({levelsPerGrid.length} × {binsPerLevel})
+                      </Typography>
+                    </TableCell>
                     <TableCell>{rackBins.length}</TableCell>
                     <TableCell>{occupiedBins.length}</TableCell>
                     <TableCell>

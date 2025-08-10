@@ -447,6 +447,29 @@ function EnhancedBinsList() {
       const matchesZone = !filterZone || bin.zoneId === filterZone;
       
       return matchesSearch && matchesStatus && matchesZone;
+    }).sort((a, b) => {
+      // Sort bins by code in ascending order (A1, A2, A3, B1, B2, etc.)
+      // First sort by grid level, then by level (A, B, C), then by position (1, 2, 3)
+      const aGrid = a.gridLevel || a.shelfLevel || 0;
+      const bGrid = b.gridLevel || b.shelfLevel || 0;
+      
+      if (aGrid !== bGrid) {
+        return aGrid - bGrid;
+      }
+      
+      // Extract level and position from bin code (e.g., "WH1-GF-R01-G01-A1" -> level="A", position=1)
+      const aLevel = a.level || (a.code ? a.code.split('-').pop()?.charAt(0) : 'A') || 'A';
+      const bLevel = b.level || (b.code ? b.code.split('-').pop()?.charAt(0) : 'A') || 'A';
+      
+      if (aLevel !== bLevel) {
+        return aLevel.localeCompare(bLevel);
+      }
+      
+      // Sort by position within the same level
+      const aPosition = a.position || (a.code ? parseInt(a.code.split('-').pop()?.substring(1)) : 1) || 1;
+      const bPosition = b.position || (b.code ? parseInt(b.code.split('-').pop()?.substring(1)) : 1) || 1;
+      
+      return aPosition - bPosition;
     });
   }, [bins, searchText, filterStatus, filterZone]);
 
