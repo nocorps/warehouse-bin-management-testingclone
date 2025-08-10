@@ -2,42 +2,57 @@ import { warehouseService } from './warehouseService';
 
 export class RackService {
   /**
-   * Generate location code based on the format: WH-GF-R01-G01-A1
-   * WH = Warehouse, GF = Floor, R01 = Rack, G01 = Grid, A1 = Bin
+   * Generate location code based on the format: WH1-GF-R04-G01-A1
+   * WH1 = Warehouse, GF = Floor, R04 = Rack, G01 = Grid, A1 = Bin (position within grid)
+   * New format: Within each grid, positions increment sequentially
+   * Grid 1: A1, A2, A3, A4... Grid 2: B1, B2, B3, B4...
+   * gridNumber determines the letter (1=A, 2=B, 3=C, etc.)
+   * binNumber is the position within that grid (1, 2, 3, etc.)
    */
   generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binNumber) {
     const paddedRack = String(rackNumber).padStart(2, '0');
     const paddedGrid = String(gridNumber).padStart(2, '0');
     const binCode = this.numberToBinLetter(binNumber, gridNumber);
     
-    return `${warehouseCode}-${floor}-R${paddedRack}-G${paddedGrid}-${binCode}`;
+    return `${warehouseCode}1-${floor}-R${paddedRack}-G${paddedGrid}-${binCode}`;
   }
 
   /**
-   * Convert bin number to letter format based on grid
-   * Grid 1: A1, B1, C1, D1... Grid 2: A2, B2, C2, D2... etc.
+   * Convert bin number to letter format with position
+   * New format: Grid determines letter, position is sequential within grid
+   * Grid 1: A1, A2, A3... Grid 2: B1, B2, B3... Grid 3: C1, C2, C3...
+   * gridNumber determines the letter (1=A, 2=B, 3=C, etc.)
+   * binNumber is the position within that grid
    */
-  numberToBinLetter(binNumber, gridNumber) {
+  numberToBinLetter(binNumber, gridNumber = 1) {
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const letterIndex = (binNumber - 1) % letters.length;
+    const letterIndex = (gridNumber - 1) % letters.length;
     const letter = letters[letterIndex];
     
-    return `${letter}${gridNumber}`;
+    return `${letter}${binNumber}`;
   }
 
   /**
    * Parse location code back to components
+   * Handles new format: WH1-GF-R04-G01-A1 where A1 = grid A, position 1
    */
   parseLocationCode(locationCode) {
     const parts = locationCode.split('-');
     if (parts.length !== 5) return null;
+
+    const binPart = parts[4]; // e.g., "A1"
+    const gridLetter = binPart.charAt(0); // "A"
+    const position = parseInt(binPart.substring(1)) || 1; // "1"
+    const gridNumber = gridLetter.charCodeAt(0) - 'A'.charCodeAt(0) + 1; // A=1, B=2, C=3
 
     return {
       warehouse: parts[0],
       floor: parts[1],
       rack: parseInt(parts[2].substring(1)),
       grid: parseInt(parts[3].substring(1)),
-      bin: parts[4]
+      bin: binPart,
+      gridNumber: gridNumber,
+      position: position
     };
   }
 
@@ -115,14 +130,14 @@ export class RackService {
         const grid = await warehouseService.createShelf(warehouseId, gridData);
         grids.push(grid);
 
-        // Create bins for this grid
-        for (let binNum = 1; binNum <= binsPerGrid; binNum++) {
+        // Create bins for this grid - sequential positions A1, A2, A3... for grid 1, B1, B2, B3... for grid 2
+        for (let position = 1; position <= binsPerGrid; position++) {
           const locationCode = this.generateLocationCode(
             warehouseCode,
             floor,
             rackConfig.rackNumber || 1,
             gridNum,
-            binNum
+            position
           );
 
           const binData = {
@@ -131,17 +146,21 @@ export class RackService {
             rackCode: rack.name,
             shelfId: grid.id,
             gridLevel: gridNum,
-            position: binNum,
+            shelfLevel: gridNum, // For backward compatibility - now represents grid number
+            position: position,
             capacity: maxProductsPerBin,
             currentQty: 0,
             status: 'available',
             warehouseId,
+            floorCode: floor,
+            gridCode: `G${String(gridNum).padStart(2, '0')}`,
             location: {
               warehouse: warehouseCode,
               floor: floor,
               grid: gridNum,
               rack: rack.rackNumber || 1,
-              bin: binNum,
+              gridNumber: gridNum,
+              position: position,
               fullCode: locationCode
             },
             createdAt: new Date().toISOString()
@@ -470,7 +489,7 @@ export class RackService {
         totalCapacity: totalCapacity
       },
       estimatedSetupTime: `${Math.ceil(totalBins / 10)} minutes`,
-      locationFormat: 'WH-GF-R01-G01-A1'
+      locationFormat: 'WH1-GF-R01-G01-A1 (Grid 1: A1,A2,A3... Grid 2: B1,B2,B3...)'
     };
   }
 
@@ -570,14 +589,15 @@ export class RackService {
   /**
    * Generate bin code for compatibility (legacy method)
    * This actually generates the full location code for the bin
+   * gridLevel now represents the grid number, position is the position within that grid
    */
   generateBinCode(rackCode, gridLevel, position, warehouseCode = 'WH', floor = 'GF') {
     // Extract rack number from rackCode (e.g., "R01" -> 1)
     const rackNumber = parseInt(rackCode.substring(1)) || 1;
     const gridNumber = parseInt(gridLevel) || 1;
-    const binNumber = parseInt(position) || 1;
+    const binPosition = parseInt(position) || 1;
     
-    return this.generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binNumber);
+    return this.generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binPosition);
   }
 
   /**

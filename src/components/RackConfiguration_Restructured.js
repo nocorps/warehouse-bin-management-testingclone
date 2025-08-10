@@ -210,20 +210,21 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     const data = watchedValues;
     const warehouseCode = currentWarehouse?.code || 'WH';
     
-    // Generate sample location codes
+    // Generate sample location codes with new format
     const sampleLocations = [];
+    
     for (let grid = 1; grid <= Math.min(3, data.gridCount); grid++) {
-      for (let bin = 1; bin <= Math.min(3, data.binsPerGrid); bin++) {
+      for (let position = 1; position <= Math.min(3, data.binsPerGrid); position++) {
         const locationCode = rackService.generateLocationCode(
           warehouseCode,
           data.floor,
           data.rackNumber,
           grid,
-          bin
+          position
         );
         sampleLocations.push({
           grid,
-          bin,
+          position,
           locationCode
         });
       }
@@ -588,10 +589,10 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
                 <Typography variant="body1" gutterBottom>
-                  <strong>Format:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
+                  <strong>Format:</strong> {currentWarehouse?.code || 'WH'}1-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
                 </Typography>
                 <Typography variant="body2" gutterBottom>
-                  <strong>Example:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, B1, C1... Grid 2: A2, B2, C2...)
+                  <strong>Example:</strong> {currentWarehouse?.code || 'WH'}1-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, A2, A3... Grid 2: B1, B2, B3...)
                 </Typography>
                 <Typography variant="body2" sx={{ color: 'info.dark', fontWeight: 'bold' }}>
                   📋 Row Format: R{String(watchedValues.rackNumber || 1).padStart(2, '0')} (R + two-digit number: R01, R02, R03... NOT RR, RRR)
@@ -1080,7 +1081,7 @@ function RackCard({ rack, onEdit, onDelete, onPrint, onViewDetails }) {
         </Box>
 
         <Typography variant="body2" color="text.secondary" gutterBottom>
-          Location Format: {currentWarehouse?.code || 'WH'}-{rack.floor}-R{String(rack.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid bins: A1, B1, C1... A2, B2, C2...)
+          Location Format: {currentWarehouse?.code || 'WH'}1-{rack.floor}-R{String(rack.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, A2, A3... Grid 2: B1, B2, B3...)
         </Typography>
 
         <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
@@ -1278,7 +1279,7 @@ export default function RackConfiguration() {
       </Box>
 
       <Typography variant="body1" color="text.secondary" gutterBottom>
-        Configure rows with the location format: WH-GF-R01-G01-A1 (Warehouse-Floor-Rack-Grid-Bin). Bins are named A1, B1, C1... for grid 1, A2, B2, C2... for grid 2, etc.
+        Configure rows with the location format: WH1-GF-R01-G01-A1 (Warehouse-Floor-Rack-Grid-Bin). Bins are named A1, A2, A3... for grid 1, B1, B2, B3... for grid 2, etc.
       </Typography>
 
       {racks.length === 0 ? (

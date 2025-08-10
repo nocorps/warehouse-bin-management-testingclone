@@ -70,11 +70,13 @@ export const warehouseOperations = {
         }
         
         // MODIFIER: Prefer ground level (easier access)
+        // Note: In new format, shelfLevel=1 represents grid 1 (first grid)
         if (preferGroundLevel && bin.shelfLevel === 1) {
           score += 150;
         }
         
-        // MODIFIER: Shelf level penalty (higher shelves are less convenient)
+        // MODIFIER: Grid level penalty (higher grids are less convenient)
+        // Note: In new format, shelfLevel represents grid number
         score -= (bin.shelfLevel - 1) * 25;
         
         // MODIFIER: Available capacity bonus (prefer more space when possible)
@@ -410,10 +412,10 @@ export const warehouseOperations = {
             return createdDiff;
           }
           
-          // 5. QUATERNARY SORT: Shelf level (ground level first for easier access)
+          // 5. QUATERNARY SORT: Grid level (first grid first for easier access)
           const shelfDiff = (a.shelfLevel || 1) - (b.shelfLevel || 1);
           if (shelfDiff !== 0) {
-            console.log(`  → Sorted by shelf level: ${a.shelfLevel} vs ${b.shelfLevel}`);
+            console.log(`  → Sorted by grid level: ${a.shelfLevel} vs ${b.shelfLevel}`);
             return shelfDiff;
           }
           
@@ -500,7 +502,7 @@ export const warehouseOperations = {
       reasons.push(`Lot: ${bin.lotNumber}`);
     }
     
-    reasons.push(`Shelf ${bin.shelfLevel || 1}`);
+    reasons.push(`Grid ${bin.shelfLevel || 1}`);
     
     return reasons.join(', ');
   },
@@ -562,14 +564,14 @@ export const warehouseOperations = {
         });
       }
 
-      // Simple route optimization by shelf level and rack order
+      // Simple route optimization by grid level and rack order
       // In a real implementation, you might use more sophisticated algorithms
       const sortedItems = itemsWithLocations.sort((a, b) => {
-        const aMinShelf = Math.min(...a.pickPlan.map(p => p.shelfLevel));
-        const bMinShelf = Math.min(...b.pickPlan.map(p => p.shelfLevel));
+        const aMinGrid = Math.min(...a.pickPlan.map(p => p.shelfLevel));
+        const bMinGrid = Math.min(...b.pickPlan.map(p => p.shelfLevel));
         
-        if (aMinShelf !== bMinShelf) {
-          return aMinShelf - bMinShelf;
+        if (aMinGrid !== bMinGrid) {
+          return aMinGrid - bMinGrid;
         }
         
         const aMinRack = a.pickPlan[0]?.rackCode || '';
@@ -904,12 +906,18 @@ export const warehouseOperations = {
           const gridCompare = aGridCode.localeCompare(bGridCode);
           if (gridCompare !== 0) return gridCompare;
           
-          // Then sort by shelf level (ascending)
-          const aShelfLevel = parseInt(a.shelfLevel) || 1;
-          const bShelfLevel = parseInt(b.shelfLevel) || 1;
-          if (aShelfLevel !== bShelfLevel) return aShelfLevel - bShelfLevel;
+          // Then sort by grid number (ascending) - Grid 1, Grid 2, Grid 3
+          // Note: In new format, shelfLevel represents grid number
+          const aGridNumber = parseInt(a.shelfLevel) || 1;
+          const bGridNumber = parseInt(b.shelfLevel) || 1;
+          if (aGridNumber !== bGridNumber) return aGridNumber - bGridNumber;
           
-          // Finally sort by bin code (A1, B1, etc.)
+          // Finally sort by position within grid (ascending) - A1, A2, A3 for grid 1, B1, B2, B3 for grid 2, etc.
+          const aPosition = parseInt(a.position) || 1;
+          const bPosition = parseInt(b.position) || 1;
+          if (aPosition !== bPosition) return aPosition - bPosition;
+          
+          // Fallback: sort by bin code for consistency
           const binCodeCompare = (a.code || '').localeCompare(b.code || '');
           return binCodeCompare;
         });
@@ -917,7 +925,7 @@ export const warehouseOperations = {
         // Log sorting results for debugging
         console.log('📊 Empty bins sorted in order:', 
           emptyBins.slice(0, 5).map(bin => 
-            `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, Shelf: ${bin.shelfLevel || 1})`
+            `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, GridNum: ${bin.shelfLevel || 1}, Pos: ${bin.position || 1})`
           ));
         
         // Allocate to empty bins - fill each to capacity before moving to next
@@ -930,7 +938,7 @@ export const warehouseOperations = {
             allocationPlan.push({
               bin,
               allocatedQuantity: allocateQty,
-              reason: `New placement in empty bin - ${allocateQty} units (Rack: ${bin.rackCode}, Shelf: ${bin.shelfLevel})`,
+              reason: `New placement in empty bin - ${allocateQty} units (Rack: ${bin.rackCode}, Grid: ${bin.shelfLevel})`,
               priority: 2,
               newTotal: allocateQty,
               utilization: ((allocateQty / bin.capacity) * 100).toFixed(1)
@@ -1119,7 +1127,7 @@ export const warehouseOperations = {
     }
     
     // Location bonuses (prefer ground level, good zones)
-    if (bin.shelfLevel === 1) score += 20; // Ground level bonus
+    if (bin.shelfLevel === 1) score += 20; // First grid bonus (easier access)
     else score -= (bin.shelfLevel - 1) * 5; // Penalty for higher shelves
     
     if (bin.zoneId === 'fast-pick' || bin.zoneId === 'main') score += 15; // Preferred zones
@@ -1586,7 +1594,7 @@ export const warehouseOperations = {
   },
 
   generateRouteInstructions(items) {
-    // Group by shelf level and zone for optimal routing
+    // Group by grid level and zone for optimal routing
     const groupedItems = items.reduce((acc, item) => {
       const key = `${item.zoneId || 'main'}-${item.shelfLevel || 1}`;
       if (!acc[key]) acc[key] = [];

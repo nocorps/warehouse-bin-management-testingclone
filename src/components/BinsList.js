@@ -245,7 +245,7 @@ function BinDialog({ open, onClose, bin = null, onSave }) {
                     fullWidth
                     disabled={isEdit}
                     error={!!errors.shelfLevel}
-                    helperText={isEdit ? 'Grid level cannot be changed during edit' : errors.shelfLevel?.message}
+                    helperText={isEdit ? 'Grid number cannot be changed during edit' : errors.shelfLevel?.message}
                   />
                 )}
               />
