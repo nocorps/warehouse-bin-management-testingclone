@@ -176,15 +176,15 @@ function UtilizationCard({ title, used, total, color = 'primary' }) {
 
   return (
     <Card sx={{ height: '100%' }}>
-      <CardContent>
-        <Typography color="textSecondary" gutterBottom variant="body2">
+      <CardContent sx={{ py: 2.5 }}>
+        <Typography color="textSecondary" gutterBottom variant="h6" sx={{ mb: 2 }}>
           {title}
         </Typography>
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-          <Typography variant="h5">
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+          <Typography variant="h5" fontWeight="bold">
             {used} / {total}
           </Typography>
-          <Typography variant="h6" color={color}>
+          <Typography variant="h6" color={color} fontWeight="medium">
             {percentage.toFixed(1)}%
           </Typography>
         </Box>
@@ -192,9 +192,9 @@ function UtilizationCard({ title, used, total, color = 'primary' }) {
           variant="determinate" 
           value={percentage} 
           color={color}
-          sx={{ height: 8, borderRadius: 4 }}
+          sx={{ height: 10, borderRadius: 5, mb: 2 }}
         />
-        <Typography variant="body2" color="textSecondary" mt={1}>
+        <Typography variant="body1" color="textSecondary" sx={{ mt: 1.5, fontWeight: 'medium' }}>
           {total - used} available
         </Typography>
       </CardContent>
@@ -473,7 +473,7 @@ export default function Dashboard() {
         <Grid item xs={12} md={6}>
           <UtilizationCard
             title="Bin Utilization"
-            used={stats.occupiedBins}
+            used={stats.occupiedBins} 
             total={stats.totalBins}
             color="primary"
           />
