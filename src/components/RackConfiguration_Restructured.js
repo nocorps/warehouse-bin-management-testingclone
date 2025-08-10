@@ -127,7 +127,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     const currentFloor = floor || watchedValues.floor || 'GF';
     const existingNumbers = racks
       .filter(r => r.floor === currentFloor)
-      .map(r => r.rackNumber || 1)
+      .map(r => parseInt(r.rackNumber) || 1)
       .sort((a, b) => a - b);
     const availableNumbers = [];
     
@@ -246,6 +246,30 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     if (!validation.isValid) {
       showError(`Invalid configuration: ${validation.errors.join(', ')}`);
       return;
+    }
+
+    // Double-check for duplicate rack number before saving
+    const numValue = parseInt(data.rackNumber);
+    const currentFloor = data.floor;
+    
+    if (!isEdit) {
+      // For new rack creation
+      const existing = racks.find(r => parseInt(r.rackNumber) === numValue && r.floor === currentFloor);
+      if (existing) {
+        const availableNumbers = getAvailableRackNumbers().slice(0, 3);
+        const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+        showError(`❌ Cannot create rack: R${String(numValue).padStart(2, '0')} already exists on floor "${currentFloor}" in "${existing.name}"!\n\n💡 Available on ${currentFloor}: ${suggestions}`);
+        return;
+      }
+    } else if (rack) {
+      // For rack editing
+      const existing = racks.find(r => parseInt(r.rackNumber) === numValue && r.floor === currentFloor && r.id !== rack.id);
+      if (existing) {
+        const availableNumbers = getAvailableRackNumbers().slice(0, 3);
+        const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+        showError(`❌ Cannot update rack: R${String(numValue).padStart(2, '0')} already exists on floor "${currentFloor}" in "${existing.name}"!\n\n💡 Available on ${currentFloor}: ${suggestions}`);
+        return;
+      }
     }
 
     try {
@@ -389,7 +413,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                         
                         if (!isEdit) {
                           // Check for new rack creation - same rack number on same floor
-                          const existing = racks.find(r => r.rackNumber === numValue && r.floor === currentFloor);
+                          const existing = racks.find(r => parseInt(r.rackNumber) === numValue && r.floor === currentFloor);
                           if (existing) {
                             const availableNumbers = getAvailableRackNumbers().slice(0, 3);
                             const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
@@ -397,7 +421,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                           }
                         } else {
                           // Check for editing existing rack - same rack number on same floor (excluding current rack)
-                          const existing = racks.find(r => r.rackNumber === numValue && r.floor === currentFloor && r.id !== rack.id);
+                          const existing = racks.find(r => parseInt(r.rackNumber) === numValue && r.floor === currentFloor && r.id !== rack.id);
                           if (existing) {
                             const availableNumbers = getAvailableRackNumbers().slice(0, 3);
                             const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
