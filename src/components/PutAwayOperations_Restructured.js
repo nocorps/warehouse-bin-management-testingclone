@@ -337,7 +337,14 @@ export default function PutAwayOperations() {
               shelfCode: `G${String(primaryBin.gridLevel || 1).padStart(3, '0')}`,
               executedAt: new Date().toISOString(),
               binCount: allocationResult.allocationPlan.length,
-              autoCreatedBins: allocationResult.summary?.autoCreatedBins || 0
+              autoCreatedBins: allocationResult.summary?.autoCreatedBins || 0,
+              // Store actual allocation details for accurate reporting
+              allocationPlan: allocationResult.allocationPlan.map(plan => ({
+                binCode: plan.bin.code,
+                binLocation: plan.bin.location?.fullCode || plan.bin.code,
+                allocatedQuantity: plan.allocatedQuantity,
+                reason: plan.reason
+              }))
             });
             
           } catch (allocationError) {

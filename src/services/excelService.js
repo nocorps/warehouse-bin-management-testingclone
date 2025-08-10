@@ -198,34 +198,48 @@ export class ExcelService {
       ];
 
       successfulItems.forEach(item => {
-        // Check if location contains multiple bins (comma-separated)
-        const locationStr = item.location || 'N/A';
-        if (locationStr.includes(',')) {
-          const locations = locationStr.split(',').map(loc => loc.trim());
-          
-          // Split the quantities evenly across locations, with any remainder going to the first bin
-          const totalQty = parseInt(item.quantity) || 0;
-          const baseQtyPerBin = Math.floor(totalQty / locations.length);
-          const remainder = totalQty % locations.length;
-          
-          // Create a row for each location with its portion of the quantity
-          locations.forEach((location, index) => {
-            const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+        // Check if we have actual allocation details (new format)
+        if (item.allocationPlan && Array.isArray(item.allocationPlan)) {
+          // Use actual allocation details - this is the accurate approach
+          item.allocationPlan.forEach(allocation => {
             reportData.push([
               item.barcode || '',
-              location,
-              binQty,
+              allocation.binLocation || allocation.binCode,
+              allocation.allocatedQuantity,
               'Put-Away'
             ]);
           });
         } else {
-          // Single location, just show the total quantity
-          reportData.push([
-            item.barcode || '',
-            locationStr,
-            item.quantity || '',
-            'Put-Away'
-          ]);
+          // Legacy format - fall back to old logic (less accurate)
+          // Check if location contains multiple bins (comma-separated)
+          const locationStr = item.location || 'N/A';
+          if (locationStr.includes(',')) {
+            const locations = locationStr.split(',').map(loc => loc.trim());
+            
+            // Split the quantities evenly across locations, with any remainder going to the first bin
+            const totalQty = parseInt(item.quantity) || 0;
+            const baseQtyPerBin = Math.floor(totalQty / locations.length);
+            const remainder = totalQty % locations.length;
+            
+            // Create a row for each location with its portion of the quantity
+            locations.forEach((location, index) => {
+              const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+              reportData.push([
+                item.barcode || '',
+                location,
+                binQty,
+                'Put-Away'
+              ]);
+            });
+          } else {
+            // Single location, just show the total quantity
+            reportData.push([
+              item.barcode || '',
+              locationStr,
+              item.quantity || '',
+              'Put-Away'
+            ]);
+          }
         }
       });
 

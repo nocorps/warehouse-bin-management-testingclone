@@ -1665,85 +1665,101 @@ export class PrintService {
     for (const item of successfulItems) {
       const barcode = item.barcode || item.sku || 'N/A';
       
-      // Process location for both dash-connected and comma-separated locations
-      const locationStr = item.location || 'N/A';
-      let locations = [];
-      
-      if (locationStr.includes('-')) {
-        // Look for patterns like WH01-SF-R10-G02-WH01-GF-R01-G02-A2
-        const parts = locationStr.split('-');
-        // Improved algorithm to handle any number of concatenated locations
-        let locationParts = [];
-        let currentLocation = [];
-        
-        // Assume the first part is always part of the first location
-        currentLocation.push(parts[0]);
-        
-        // Look for warehouse code patterns (like WH01) in the middle of the string
-        for (let i = 1; i < parts.length; i++) {
-          // If we find a warehouse prefix (not at the beginning)
-          if (parts[i].match(/^WH\d+$/)) {
-            // Add the current completed location
-            locationParts.push(currentLocation.join('-'));
-            // Start a new location
-            currentLocation = [parts[i]];
-          } else {
-            // Add to current location
-            currentLocation.push(parts[i]);
-          }
-        }
-        
-        // Add the last location if there's anything in currentLocation
-        if (currentLocation.length > 0) {
-          locationParts.push(currentLocation.join('-'));
-        }
-        
-        // Use the extracted locations if we found multiple
-        if (locationParts.length > 1) {
-          locations = locationParts;
-        } else if (locationStr.includes(',')) {
-          // Fall back to comma splitting
-          locations = locationStr.split(',').map(loc => loc.trim());
-        } else {
-          // Single location
-          locations = [locationStr];
-        }
-      } else if (locationStr.includes(',')) {
-        // Location string already has commas
-        locations = locationStr.split(',').map(loc => loc.trim());
-      } else {
-        // Single location
-        locations = [locationStr];
-      }
-      
-      const totalQty = parseInt(item.quantity) || 0;
-      
-      if (locations.length > 1) {
-        const baseQtyPerBin = Math.floor(totalQty / locations.length);
-        const remainder = totalQty % locations.length;
-        
-        // Create a row for each location with its portion of the quantity
-        locations.forEach((location, index) => {
-          const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+      // Check if we have actual allocation details (new format)
+      if (item.allocationPlan && Array.isArray(item.allocationPlan)) {
+        // Use actual allocation details - this is the accurate approach
+        item.allocationPlan.forEach(allocation => {
           tableHTML += `
             <tr>
               <td>${barcode}</td>
-              <td>${location}</td>
-              <td>${binQty}</td>
+              <td>${allocation.binLocation || allocation.binCode}</td>
+              <td>${allocation.allocatedQuantity}</td>
               <td>Put-Away</td>
             </tr>
           `;
         });
       } else {
-        // Single location
-        tableHTML += `
-          <tr>
-            <td>${barcode}</td>
-            <td>${locations[0]}</td>
-            <td>${totalQty}</td>
-            <td>Put-Away</td>
-          </tr>
-        `;
+        // Legacy format - fall back to the old splitting logic (less accurate)
+        // Process location for both dash-connected and comma-separated locations
+        const locationStr = item.location || 'N/A';
+        let locations = [];
+        
+        if (locationStr.includes('-')) {
+          // Look for patterns like WH01-SF-R10-G02-WH01-GF-R01-G02-A2
+          const parts = locationStr.split('-');
+          // Improved algorithm to handle any number of concatenated locations
+          let locationParts = [];
+          let currentLocation = [];
+          
+          // Assume the first part is always part of the first location
+          currentLocation.push(parts[0]);
+          
+          // Look for warehouse code patterns (like WH01) in the middle of the string
+          for (let i = 1; i < parts.length; i++) {
+            // If we find a warehouse prefix (not at the beginning)
+            if (parts[i].match(/^WH\d+$/)) {
+              // Add the current completed location
+              locationParts.push(currentLocation.join('-'));
+              // Start a new location
+              currentLocation = [parts[i]];
+            } else {
+              // Add to current location
+              currentLocation.push(parts[i]);
+            }
+          }
+          
+          // Add the last location if there's anything in currentLocation
+          if (currentLocation.length > 0) {
+            locationParts.push(currentLocation.join('-'));
+          }
+          
+          // Use the extracted locations if we found multiple
+          if (locationParts.length > 1) {
+            locations = locationParts;
+          } else if (locationStr.includes(',')) {
+            // Fall back to comma splitting
+            locations = locationStr.split(',').map(loc => loc.trim());
+          } else {
+            // Single location
+            locations = [locationStr];
+          }
+        } else if (locationStr.includes(',')) {
+          // Location string already has commas
+          locations = locationStr.split(',').map(loc => loc.trim());
+        } else {
+          // Single location
+          locations = [locationStr];
+        }
+        
+        const totalQty = parseInt(item.quantity) || 0;
+        
+        if (locations.length > 1) {
+          const baseQtyPerBin = Math.floor(totalQty / locations.length);
+          const remainder = totalQty % locations.length;
+          
+          // Create a row for each location with its portion of the quantity
+          locations.forEach((location, index) => {
+            const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+            tableHTML += `
+              <tr>
+                <td>${barcode}</td>
+                <td>${location}</td>
+                <td>${binQty}</td>
+                <td>Put-Away</td>
+              </tr>
+            `;
+          });
+        } else {
+          // Single location
+          tableHTML += `
+            <tr>
+              <td>${barcode}</td>
+              <td>${locations[0]}</td>
+              <td>${totalQty}</td>
+              <td>Put-Away</td>
+            </tr>
+          `;
+        }
       }
     }
     
