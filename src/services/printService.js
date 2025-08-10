@@ -1947,79 +1947,19 @@ export class PrintService {
     for (const movement of movements) {
       const barcode = movement.sku || 'N/A';
       
-      // Clean up location by ensuring full location paths and proper comma separation
-      let location = movement.location || 'N/A';
-      // Fix any double warehouse prefixes for connected locations
-      if (location.includes('-')) {
-        // Look for patterns like WH01-SF-R10-G02-WH01-GF-R01-G02-A2
-        const parts = location.split('-');
-        // Improved algorithm to handle any number of concatenated locations
-        let locationParts = [];
-        let currentLocation = [];
-        
-        // Assume the first part is always part of the first location
-        currentLocation.push(parts[0]);
-        
-        // Look for warehouse code patterns (like WH01) in the middle of the string
-        for (let i = 1; i < parts.length; i++) {
-          // If we find a warehouse prefix (not at the beginning)
-          if (parts[i].match(/^WH\d+$/)) {
-            // Add the current completed location
-            locationParts.push(currentLocation.join('-'));
-            // Start a new location
-            currentLocation = [parts[i]];
-          } else {
-            // Add to current location
-            currentLocation.push(parts[i]);
-          }
-        }
-        
-        // Add the last location if there's anything in currentLocation
-        if (currentLocation.length > 0) {
-          locationParts.push(currentLocation.join('-'));
-        }
-        
-        // Join all distinct locations with commas
-        if (locationParts.length > 1) {
-          location = locationParts.join(', ');
-        }
-      }
+      const location = movement.location || 'N/A';
+      const quantity = movement.quantity || 0;
+      const operation = movement.operationType || 'Unknown';
       
-      // Determine quantity based on movement type
-      let quantity = Math.abs(movement.movement) || 0;
-      let operation = movement.movement > 0 ? 'Put-Away' : 'Pick';
-      
-      // Check if we have multiple locations
-      if (location.includes(',')) {
-        const locations = location.split(',').map(loc => loc.trim());
-        
-        // Calculate quantity per location
-        const baseQtyPerBin = Math.floor(quantity / locations.length);
-        const remainder = quantity % locations.length;
-        
-        // Add individual rows for each location
-        locations.forEach((loc, index) => {
-          const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
-          tableHTML += `
-            <tr>
-              <td>${barcode}</td>
-              <td>${loc}</td>
-              <td>${binQty}</td>
-              <td>${operation}</td>
-            </tr>
-          `;
-        });
-      } else {
-        // Single location
-        tableHTML += `
-          <tr>
-            <td>${barcode}</td>
-            <td>${location}</td>
-            <td>${quantity}</td>
-            <td>${operation}</td>
-          </tr>
-        `;
-      }
+      // Add single row per movement - use actual data without modification
+      tableHTML += `
+        <tr>
+          <td>${barcode}</td>
+          <td>${location}</td>
+          <td>${quantity}</td>
+          <td>${operation}</td>
+        </tr>
+      `;
     }
     
     tableHTML += `

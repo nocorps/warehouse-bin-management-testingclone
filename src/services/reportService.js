@@ -116,7 +116,6 @@ export class ReportService {
       for (const item of historyItems) {
         if (item.executionDetails && item.executionDetails.items) {
           for (const execItem of item.executionDetails.items) {
-            const bin = binMap.get(execItem.binId) || {};
             const sku = execItem.barcode || execItem.sku;
             
             // Skip if SKU filtering is active and this SKU is not selected
@@ -126,145 +125,167 @@ export class ReportService {
               }
             }
 
-            // Extract quantity
-            let quantity = 0;
-            if (item.operationType === 'putaway') {
-              quantity = parseInt(execItem.quantity) || 0;
-            } else if (item.operationType === 'pick') {
-              quantity = parseInt(execItem.pickedQty || execItem.quantity) || 0;
+            // Handle operations with actual allocation details (put-away operations)
+            if (item.operationType === 'putaway' && execItem.allocationPlan && Array.isArray(execItem.allocationPlan)) {
+              // Use actual allocation details for accurate reporting
+              execItem.allocationPlan.forEach(allocation => {
+                const bin = binMap.get(allocation.binId) || {};
+                const quantity = parseInt(allocation.allocatedQuantity) || 0;
+                const inventoryKey = `${sku}_${allocation.binId || 'UNKNOWN'}`;
+                
+                // Get current inventory level for this SKU in this bin
+                const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                const openingQty = currentLevel;
+                const closingQty = currentLevel + quantity;
+                
+                // Update inventory tracker
+                inventoryTracker.set(inventoryKey, closingQty);
+                
+                // Use actual bin location from allocation
+                const binCode = allocation.binCode || bin.code || 'Unknown';
+                const location = allocation.binLocation || allocation.binCode || bin.code || 'Unknown';
+                
+                console.log(`📦 PUT-AWAY (from allocation): ${sku} in ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
+                
+                movements.push({
+                  date: new Date(item.timestamp).toLocaleDateString(),
+                  time: new Date(item.timestamp).toLocaleTimeString(),
+                  timestamp: item.timestamp,
+                  sku: sku,
+                  operationType: 'Put-Away',
+                  quantity: quantity,
+                  location: location,
+                  binCode: binCode,
+                  binId: allocation.binId || 'Unknown',
+                  status: execItem.status || 'Completed',
+                  opening: openingQty,
+                  putaway: quantity,
+                  pick: 0,
+                  movement: quantity,
+                  closing: closingQty,
+                  lotNumber: execItem.lotNumber || 'N/A',
+                  expiryDate: execItem.expiryDate ? new Date(execItem.expiryDate).toLocaleDateString() : 'N/A',
+                  notes: allocation.reason || execItem.notes || '',
+                  inventoryKey: inventoryKey
+                });
+              });
             }
+            // Handle pick operations with picked bins details
+            else if (item.operationType === 'pick' && execItem.pickedBins && Array.isArray(execItem.pickedBins)) {
+              // Use actual picked bins details for accurate reporting
+              execItem.pickedBins.forEach(pickedBin => {
+                const bin = binMap.get(pickedBin.binId) || {};
+                const quantity = parseInt(pickedBin.quantity) || 0;
+                const inventoryKey = `${sku}_${pickedBin.binId || 'UNKNOWN'}`;
+                
+                // Get current inventory level for this SKU in this bin
+                const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                const openingQty = currentLevel;
+                const closingQty = Math.max(0, currentLevel - quantity);
+                
+                // Update inventory tracker
+                inventoryTracker.set(inventoryKey, closingQty);
+                
+                // Use actual bin location from picked bins
+                const binCode = pickedBin.binCode || bin.code || 'Unknown';
+                const location = pickedBin.binCode || bin.code || 'Unknown';
+                
+                console.log(`📦 PICK (from pickedBins): ${sku} from ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
+                
+                movements.push({
+                  date: new Date(item.timestamp).toLocaleDateString(),
+                  time: new Date(item.timestamp).toLocaleTimeString(),
+                  timestamp: item.timestamp,
+                  sku: sku,
+                  operationType: 'Pick',
+                  quantity: quantity,
+                  location: location,
+                  binCode: binCode,
+                  binId: pickedBin.binId || 'Unknown',
+                  status: execItem.status || 'Completed',
+                  opening: openingQty,
+                  putaway: 0,
+                  pick: quantity,
+                  movement: -quantity,
+                  closing: closingQty,
+                  lotNumber: execItem.lotNumber || 'N/A',
+                  expiryDate: execItem.expiryDate ? new Date(execItem.expiryDate).toLocaleDateString() : 'N/A',
+                  notes: execItem.notes || execItem.error || '',
+                  inventoryKey: inventoryKey
+                });
+              });
+            }
+            // Fallback for legacy operations without detailed allocation/picked bin data
+            else {
+              const bin = binMap.get(execItem.binId) || {};
+              
+              // Extract quantity
+              let quantity = 0;
+              if (item.operationType === 'putaway') {
+                quantity = parseInt(execItem.quantity) || 0;
+              } else if (item.operationType === 'pick') {
+                quantity = parseInt(execItem.pickedQty || execItem.quantity) || 0;
+              }
 
-            // Create SIMPLE inventory key: SKU + BinId (most reliable)
-            const inventoryKey = `${sku}_${execItem.binId || 'UNKNOWN'}`;
-            
-            // Get current inventory level for this SKU in this bin
-            const currentLevel = inventoryTracker.get(inventoryKey) || 0;
-            
-            // Calculate opening and closing quantities
-            let openingQty = currentLevel;
-            let closingQty = currentLevel;
-            
-            if (item.operationType === 'putaway') {
-              closingQty = currentLevel + quantity;
-            } else if (item.operationType === 'pick') {
-              closingQty = Math.max(0, currentLevel - quantity);
-            }
-            
-            // Update inventory tracker
-            inventoryTracker.set(inventoryKey, closingQty);
-            
-            // BUILD LOCATION STRING: MWH01-SF-R10-G02-B1
-            let location = 'Unknown';
-            let binCode = 'Unknown';
-            
-            // Get warehouse code
-            const warehouseCode = warehouseDetails.code || warehouseDetails.name || 'MWH01';
-            
-            // IMPROVED BIN CODE EXTRACTION - Try multiple sources
-            console.log(`🔍 Extracting bin code for SKU ${sku}:`, {
-              binFromBinObject: bin?.code || 'none',
-              binFromExecItem: execItem?.binCode || 'none',
-              binId: execItem?.binId || 'none'
-            });
-            
-            // Priority 1: Direct bin code from bin object (most reliable)
-            if (bin && bin.code) {
-              binCode = bin.code;
-              console.log(`✅ Using bin.code: ${binCode}`);
-            } 
-            // Priority 2: Bin code from execution item
-            else if (execItem && execItem.binCode) {
-              binCode = execItem.binCode;
-              console.log(`✅ Using execItem.binCode: ${binCode}`);
-            } 
-            // Priority 3: Extract from binId
-            else if (execItem && execItem.binId) {
-              // Try different patterns to extract bin code from ID
-              let extractedCode = null;
+              // Create SIMPLE inventory key: SKU + BinId (most reliable)
+              const inventoryKey = `${sku}_${execItem.binId || 'UNKNOWN'}`;
               
-              // Pattern 1: Look for letter followed by numbers (B1, A2, etc.)
-              const pattern1 = execItem.binId.match(/([A-Z]\d+)/i);
-              if (pattern1) {
-                extractedCode = pattern1[1];
-              }
-              // Pattern 2: Look for the last alphanumeric segment
-              else {
-                const segments = execItem.binId.split(/[-_/]/);
-                const lastSegment = segments[segments.length - 1];
-                if (lastSegment && lastSegment.length <= 4) {
-                  extractedCode = lastSegment;
-                }
-              }
-              // Pattern 3: Take last 2-3 characters if they look like a bin code
-              if (!extractedCode && execItem.binId.length >= 2) {
-                const lastChars = execItem.binId.slice(-3);
-                if (/^[A-Z]?\d+$/i.test(lastChars)) {
-                  extractedCode = lastChars;
-                }
+              // Get current inventory level for this SKU in this bin
+              const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+              
+              // Calculate opening and closing quantities
+              let openingQty = currentLevel;
+              let closingQty = currentLevel;
+              
+              if (item.operationType === 'putaway') {
+                closingQty = currentLevel + quantity;
+              } else if (item.operationType === 'pick') {
+                closingQty = Math.max(0, currentLevel - quantity);
               }
               
-              if (extractedCode) {
-                binCode = extractedCode;
-                console.log(`✅ Extracted from binId "${execItem.binId}": ${binCode}`);
-              } else {
-                console.warn(`⚠️ Could not extract bin code from binId: ${execItem.binId}`);
-              }
-            }
-            
-            // If still unknown, try to get from location parts (fallback)
-            if (binCode === 'Unknown') {
-              const locationParts = this.extractLocationParts(bin, execItem, item, warehouseDetails);
-              if (locationParts.length > 0) {
-                const lastPart = locationParts[locationParts.length - 1];
-                if (lastPart && lastPart !== 'Unknown' && lastPart.length <= 4) {
-                  binCode = lastPart;
-                  console.log(`✅ Using last location part: ${binCode}`);
-                }
-              }
-            }
-            
-            // Final fallback: create a generic bin code based on operation sequence
-            if (binCode === 'Unknown') {
-              binCode = `B${movements.length + 1}`;
-              console.warn(`⚠️ Using fallback bin code: ${binCode}`);
-            }
-            
-            // Get bin details for location
-            if (bin && bin.code) {
-              // Build location: warehouse-floor-rack-grid-bin
-              const floorCode = bin.floorCode || 'SF';
-              const rackCode = bin.rackCode || 'R10';
-              const gridCode = bin.gridLevel ? `G0${bin.gridLevel}` : 'G02';
+              // Update inventory tracker
+              inventoryTracker.set(inventoryKey, closingQty);
               
-              location = `${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${binCode}`;
-            } else {
-              // Fallback location construction
-              location = `${warehouseCode}-SF-R10-G02-${binCode}`;
+              // Get warehouse code
+              const warehouseCode = warehouseDetails.code || warehouseDetails.name || 'WH2';
+              
+              // Use bin code from bin object or extract from execItem
+              let binCode = bin.code || execItem.binCode || 'Unknown';
+              let location = bin.code || execItem.binCode || 'Unknown';
+              
+              // If we have full bin details, construct proper location
+              if (bin && bin.code) {
+                const floorCode = bin.floorCode || 'GF';
+                const rackCode = bin.rackCode || 'R01';
+                const gridCode = bin.gridLevel ? `G${String(bin.gridLevel).padStart(2, '0')}` : 'G01';
+                
+                location = `${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${binCode}`;
+              }
+              
+              console.log(`📦 ${item.operationType.toUpperCase()} (legacy): ${sku} in ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
+              
+              movements.push({
+                date: new Date(item.timestamp).toLocaleDateString(),
+                time: new Date(item.timestamp).toLocaleTimeString(),
+                timestamp: item.timestamp,
+                sku: sku,
+                operationType: item.operationType === 'putaway' ? 'Put-Away' : 'Pick',
+                quantity: quantity,
+                location: location,
+                binCode: binCode,
+                binId: execItem.binId || 'Unknown',
+                status: execItem.status || 'Unknown',
+                opening: openingQty,
+                putaway: item.operationType === 'putaway' ? quantity : 0,
+                pick: item.operationType === 'pick' ? quantity : 0,
+                movement: item.operationType === 'pick' ? -quantity : quantity,
+                closing: closingQty,
+                lotNumber: execItem.lotNumber || 'N/A',
+                expiryDate: execItem.expiryDate ? new Date(execItem.expiryDate).toLocaleDateString() : 'N/A',
+                notes: execItem.notes || execItem.error || '',
+                inventoryKey: inventoryKey
+              });
             }
-            
-            console.log(`📦 ${item.operationType.toUpperCase()}: ${sku} in ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
-            
-            movements.push({
-              date: new Date(item.timestamp).toLocaleDateString(),
-              time: new Date(item.timestamp).toLocaleTimeString(),
-              timestamp: item.timestamp,
-              sku: sku,
-              operationType: item.operationType === 'putaway' ? 'Put-Away' : 'Pick',
-              quantity: quantity,
-              location: location, // MWH01-SF-R10-G02-B1 format
-              binCode: binCode, // B1, B2, etc.
-              binId: execItem.binId || 'Unknown',
-              status: execItem.status || 'Unknown',
-              opening: openingQty,
-              putaway: item.operationType === 'putaway' ? quantity : 0,
-              pick: item.operationType === 'pick' ? quantity : 0,
-              movement: item.operationType === 'pick' ? -quantity : quantity,
-              closing: closingQty,
-              lotNumber: execItem.lotNumber || 'N/A',
-              expiryDate: execItem.expiryDate ? new Date(execItem.expiryDate).toLocaleDateString() : 'N/A',
-              notes: execItem.notes || execItem.error || '',
-              inventoryKey: inventoryKey
-            });
           }
         }
       }
@@ -687,76 +708,17 @@ export class ReportService {
         // Extract and format the movements
         reportData.data.movements.forEach(m => {
           const barcode = m.sku || 'N/A';
+          const location = m.location || 'N/A';
+          const quantity = m.quantity || 0;
+          const operation = m.operationType || 'Unknown';
           
-          // Clean up location by ensuring full location paths and proper comma separation
-          let location = m.location || 'N/A';
-          // Fix any double warehouse prefixes for connected locations
-          if (location.includes('-')) {
-            // Look for patterns like WH01-SF-R10-G02-WH01-GF-R01-G02-A2
-            const parts = location.split('-');
-            // Improved algorithm to handle any number of concatenated locations
-            let locationParts = [];
-            let currentLocation = [];
-            
-            // Assume the first part is always part of the first location
-            currentLocation.push(parts[0]);
-            
-            // Look for warehouse code patterns (like WH01) in the middle of the string
-            for (let i = 1; i < parts.length; i++) {
-              // If we find a warehouse prefix (not at the beginning)
-              if (parts[i].match(/^WH\d+$/)) {
-                // Add the current completed location
-                locationParts.push(currentLocation.join('-'));
-                // Start a new location
-                currentLocation = [parts[i]];
-              } else {
-                // Add to current location
-                currentLocation.push(parts[i]);
-              }
-            }
-            
-            // Add the last location if there's anything in currentLocation
-            if (currentLocation.length > 0) {
-              locationParts.push(currentLocation.join('-'));
-            }
-            
-            // Join all distinct locations with commas
-            if (locationParts.length > 1) {
-              location = locationParts.join(', ');
-            }
-          }
-          
-          // Determine quantity based on movement type
-          let quantity = Math.abs(m.movement) || 0;
-          let operation = m.movement > 0 ? 'Put-Away' : 'Pick';
-          
-          // Add a row with the combined location (if multiple)
+          // Add single row per movement - use actual data without modification
           movementRows.push([
             barcode,
             location,
             quantity,
             operation
           ]);
-          
-          // Check if we have multiple locations and add individual rows
-          if (location.includes(',')) {
-            const locations = location.split(',').map(loc => loc.trim());
-            
-            // Calculate quantity per location
-            const baseQtyPerBin = Math.floor(quantity / locations.length);
-            const remainder = quantity % locations.length;
-            
-            // Add individual rows for each location
-            locations.forEach((loc, index) => {
-              const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
-              movementRows.push([
-                barcode,
-                loc,
-                binQty,
-                operation
-              ]);
-            });
-          }
         });
         
         const movementSheet = XLSX.utils.aoa_to_sheet(movementRows);
