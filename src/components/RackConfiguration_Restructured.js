@@ -13,9 +13,11 @@ import {
   DialogActions,
   TextField,
   FormControl,
+  FormHelperText,
   InputLabel,
   Select,
   MenuItem,
+  Checkbox,
   Stepper,
   Step,
   StepLabel,
@@ -72,8 +74,9 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     defaultValues: {
       name: rack?.name || '',
       floor: rack?.floor || 'GF',
-      gridCount: rack?.gridCount || rack?.shelfCount || 5,
-      binsPerGrid: rack?.binsPerGrid || rack?.binsPerShelf || 10,
+      gridCount: rack?.gridCount || rack?.shelfCount || 3,
+      levelsPerGrid: rack?.levelsPerGrid || ['A', 'B', 'C'],
+      binsPerLevel: rack?.binsPerLevel || 3,
       maxProductsPerBin: rack?.maxProductsPerBin || 100,
       rackNumber: rack?.rackNumber || 1,
       location: {
@@ -94,8 +97,9 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
       reset({
         name: rack.name || '',
         floor: rack.floor || 'GF',
-        gridCount: rack.gridCount || rack.shelfCount || 5,
-        binsPerGrid: rack.binsPerGrid || rack.binsPerShelf || 10,
+        gridCount: rack.gridCount || rack.shelfCount || 3,
+        levelsPerGrid: rack.levelsPerGrid || ['A', 'B', 'C'],
+        binsPerLevel: rack.binsPerLevel || 3,
         maxProductsPerBin: rack.maxProductsPerBin || 10,
         rackNumber: rack.rackNumber || 1,
         location: {
@@ -167,9 +171,14 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     // Check if this is an edit and if we're reducing the rack size
     if (isEdit && rack && activeStep === 1) {
       const currentGridCount = rack.gridCount || rack.shelfCount || 0;
-      const currentBinsPerGrid = rack.binsPerGrid || rack.binsPerShelf || 0;
+      const currentLevelsPerGrid = rack.levelsPerGrid || ['A', 'B', 'C'];
+      const currentBinsPerLevel = rack.binsPerLevel || 3;
+      const currentBinsPerGrid = currentLevelsPerGrid.length * currentBinsPerLevel;
+      
       const newGridCount = watchedValues.gridCount;
-      const newBinsPerGrid = watchedValues.binsPerGrid;
+      const newLevelsPerGrid = watchedValues.levelsPerGrid || ['A', 'B', 'C'];
+      const newBinsPerLevel = watchedValues.binsPerLevel || 3;
+      const newBinsPerGrid = newLevelsPerGrid.length * newBinsPerLevel;
       
       if (newGridCount < currentGridCount || newBinsPerGrid < currentBinsPerGrid) {
         const currentTotal = currentGridCount * currentBinsPerGrid;
@@ -179,8 +188,8 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
         const confirmed = window.confirm(
           `⚠️ RACK SIZE REDUCTION WARNING\n\n` +
           `You are reducing rack "${rack.name}" from:\n` +
-          `• Current: ${currentGridCount} grids × ${currentBinsPerGrid} bins = ${currentTotal} total bins\n` +
-          `• New: ${newGridCount} grids × ${newBinsPerGrid} bins = ${newTotal} total bins\n\n` +
+          `• Current: ${currentGridCount} grids × ${currentLevelsPerGrid.length} levels × ${currentBinsPerLevel} bins per level = ${currentTotal} total bins\n` +
+          `• New: ${newGridCount} grids × ${newLevelsPerGrid.length} levels × ${newBinsPerLevel} bins per level = ${newTotal} total bins\n\n` +
           `This will REMOVE ${binsToRemove} bin location(s).\n\n` +
           `⚠️ IMPORTANT: Make sure NO PRODUCTS are stored in the bins that will be removed!\n\n` +
           `The system will check for products and prevent the update if any bins contain inventory.\n\n` +
@@ -210,31 +219,44 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     const data = watchedValues;
     const warehouseCode = currentWarehouse?.code || 'WH';
     
-    // Generate sample location codes with new format
+    // Generate sample location codes with new hierarchical format
     const sampleLocations = [];
+    const levelsPerGrid = data.levelsPerGrid || ['A', 'B', 'C'];
+    const binsPerLevel = data.binsPerLevel || 3;
     
-    for (let grid = 1; grid <= Math.min(3, data.gridCount); grid++) {
-      for (let position = 1; position <= Math.min(3, data.binsPerGrid); position++) {
-        const locationCode = rackService.generateLocationCode(
-          warehouseCode,
-          data.floor,
-          data.rackNumber,
-          grid,
-          position
-        );
-        sampleLocations.push({
-          grid,
-          position,
-          locationCode
-        });
+    for (let grid = 1; grid <= Math.min(2, data.gridCount); grid++) {
+      for (let levelIndex = 0; levelIndex < Math.min(2, levelsPerGrid.length); levelIndex++) {
+        const level = levelsPerGrid[levelIndex];
+        for (let position = 1; position <= Math.min(2, binsPerLevel); position++) {
+          const locationCode = rackService.generateLocationCode(
+            warehouseCode,
+            data.floor,
+            data.rackNumber,
+            grid,
+            level,
+            position
+          );
+          sampleLocations.push({
+            grid,
+            level,
+            position,
+            locationCode
+          });
+        }
       }
     }
+
+    const totalBinsPerGrid = levelsPerGrid.length * binsPerLevel;
+    const totalBins = data.gridCount * totalBinsPerGrid;
 
     setPreviewData({
       ...data,
       warehouseCode,
-      totalBins: data.gridCount * data.binsPerGrid,
-      totalCapacity: data.gridCount * data.binsPerGrid * data.maxProductsPerBin,
+      levelsPerGrid,
+      binsPerLevel,
+      binsPerGrid: totalBinsPerGrid,
+      totalBins,
+      totalCapacity: totalBins * data.maxProductsPerBin,
       sampleLocations
     });
   };
@@ -537,27 +559,107 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                         type="number"
                         fullWidth
                         error={!!errors.gridCount}
-                        helperText={errors.gridCount?.message}
+                        helperText={errors.gridCount?.message || "Each grid will have multiple levels (A, B, C, etc.)"}
                       />
                     )}
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
                   <Controller
-                    name="binsPerGrid"
+                    name="levelsPerGrid"
                     control={control}
                     rules={{ 
-                      required: 'Bins per grid is required',
-                      min: { value: 1, message: 'Minimum 1 bin' }
+                      required: 'Levels per grid is required',
+                      validate: (value) => {
+                        if (!Array.isArray(value) || value.length === 0) {
+                          return 'At least one level is required';
+                        }
+                        return true;
+                      }
+                    }}
+                    render={({ field }) => {
+                      const allLevels = Array.from({length: 26}, (_, i) => String.fromCharCode(65 + i));
+                      
+                      const handleLevelChange = (selectedLevel) => {
+                        const currentSelected = field.value || [];
+                        const levelIndex = allLevels.indexOf(selectedLevel);
+                        
+                        if (currentSelected.includes(selectedLevel)) {
+                          // If level is already selected, remove it and all levels after it
+                          const newSelected = allLevels.slice(0, levelIndex);
+                          field.onChange(newSelected);
+                        } else {
+                          // If level is not selected, select all levels from A to this level
+                          const newSelected = allLevels.slice(0, levelIndex + 1);
+                          field.onChange(newSelected);
+                        }
+                      };
+
+                      return (
+                        <FormControl fullWidth error={!!errors.levelsPerGrid}>
+                          <InputLabel>Levels per Grid</InputLabel>
+                          <Select
+                            {...field}
+                            multiple
+                            label="Levels per Grid"
+                            value={field.value || []}
+                            renderValue={(selected) => {
+                              if (selected.length === 0) return '';
+                              const first = selected[0];
+                              const last = selected[selected.length - 1];
+                              return selected.length === 1 ? first : `${first} - ${last} (${selected.length} levels)`;
+                            }}
+                          >
+                            {allLevels.map((level, index) => {
+                              const isSelected = (field.value || []).includes(level);
+                              const isSelectable = index === 0 || (field.value || []).includes(allLevels[index - 1]);
+                              
+                              return (
+                                <MenuItem 
+                                  key={level} 
+                                  value={level}
+                                  onClick={() => handleLevelChange(level)}
+                                  disabled={!isSelectable && !isSelected}
+                                  sx={{
+                                    opacity: !isSelectable && !isSelected ? 0.5 : 1,
+                                    backgroundColor: isSelected ? 'action.selected' : 'transparent'
+                                  }}
+                                >
+                                  <Checkbox checked={isSelected} />
+                                  <span>Level {level}</span>
+                                  {index === 0 && <span style={{ fontSize: '0.75em', color: 'text.secondary', marginLeft: 8 }}>(Ground)</span>}
+                                  {index === (field.value || []).length - 1 && isSelected && (field.value || []).length > 1 && 
+                                    <span style={{ fontSize: '0.75em', color: 'primary.main', marginLeft: 8 }}>(Top)</span>
+                                  }
+                                </MenuItem>
+                              );
+                            })}
+                          </Select>
+                          <FormHelperText>
+                            {errors.levelsPerGrid?.message || 
+                             `Select the highest level (A-Z). Selecting "J" automatically includes A through J. Currently: ${(field.value || []).length} levels selected.`}
+                          </FormHelperText>
+                        </FormControl>
+                      );
+                    }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Controller
+                    name="binsPerLevel"
+                    control={control}
+                    rules={{ 
+                      required: 'Bins per level is required',
+                      min: { value: 1, message: 'Minimum 1 bin per level' }
                     }}
                     render={({ field }) => (
                       <TextField
                         {...field}
-                        label="Bins per Grid"
+                        label="Bins per Level"
                         type="number"
                         fullWidth
-                        error={!!errors.binsPerGrid}
-                        helperText={errors.binsPerGrid?.message}
+                        error={!!errors.binsPerLevel}
+                        helperText={errors.binsPerLevel?.message || "Number of positions within each level (1, 2, 3, etc.)"}
                       />
                     )}
                   />
@@ -589,13 +691,16 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
                 <Typography variant="body1" gutterBottom>
-                  <strong>Format:</strong> {currentWarehouse?.code || 'WH'}1-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
+                  <strong>Format:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
                 </Typography>
                 <Typography variant="body2" gutterBottom>
-                  <strong>Example:</strong> {currentWarehouse?.code || 'WH'}1-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, A2, A3... Grid 2: B1, B2, B3...)
+                  <strong>Example Grid 1:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1, A2, A3... (Level A positions)
+                </Typography>
+                <Typography variant="body2" gutterBottom>
+                  <strong>Example Grid 1:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-B1, B2, B3... (Level B positions)
                 </Typography>
                 <Typography variant="body2" sx={{ color: 'info.dark', fontWeight: 'bold' }}>
-                  📋 Row Format: R{String(watchedValues.rackNumber || 1).padStart(2, '0')} (R + two-digit number: R01, R02, R03... NOT RR, RRR)
+                  Each grid has levels: {(watchedValues.levelsPerGrid || ['A', 'B', 'C']).join(', ')} • Each level has {watchedValues.binsPerLevel || 3} positions • Supports levels A-Z
                 </Typography>
               </Alert>
             </StepContent>
@@ -669,10 +774,28 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                           </TableCell>
                         </TableRow>
                         <TableRow>
+                          <TableCell><strong>Levels per Grid</strong></TableCell>
+                          <TableCell>
+                            {(previewData.levelsPerGrid || []).join(', ')} ({(previewData.levelsPerGrid || []).length} levels)
+                            {isEdit && JSON.stringify(rack?.levelsPerGrid || ['A', 'B', 'C']) !== JSON.stringify(previewData.levelsPerGrid) && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell><strong>Bins per Level</strong></TableCell>
+                          <TableCell>
+                            {previewData.binsPerLevel}
+                            {isEdit && (rack?.binsPerLevel || 3) !== previewData.binsPerLevel && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
                           <TableCell><strong>Bins per Grid</strong></TableCell>
                           <TableCell>
-                            {previewData.binsPerGrid}
-                            {isEdit && (rack?.binsPerGrid || rack?.binsPerShelf) !== previewData.binsPerGrid && (
+                            {(previewData.levelsPerGrid || []).length} levels × {previewData.binsPerLevel} bins = {(previewData.levelsPerGrid || []).length * previewData.binsPerLevel} bins
+                            {isEdit && (rack?.binsPerGrid || rack?.binsPerShelf) !== ((previewData.levelsPerGrid || []).length * previewData.binsPerLevel) && (
                               <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
                             )}
                           </TableCell>

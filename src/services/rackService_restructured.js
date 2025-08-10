@@ -3,47 +3,53 @@ import { warehouseService } from './warehouseService';
 export class RackService {
   /**
    * Generate location code based on the format: WH1-GF-R04-G01-A1
-   * WH1 = Warehouse, GF = Floor, R04 = Rack, G01 = Grid, A1 = Bin (position within grid)
-   * New format: Within each grid, positions increment sequentially
-   * Grid 1: A1, A2, A3, A4... Grid 2: B1, B2, B3, B4...
-   * gridNumber determines the letter (1=A, 2=B, 3=C, etc.)
-   * binNumber is the position within that grid (1, 2, 3, etc.)
+   * WH1 = Warehouse, GF = Floor, R04 = Rack, G01 = Grid, A1 = Level A Position 1
+   * New format: Each grid has multiple levels (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z)
+   * Grid 1: Level A (A1, A2, A3...), Level B (B1, B2, B3...), Level C (C1, C2, C3...)
+   * Grid 2: Level A (A1, A2, A3...), Level B (B1, B2, B3...), Level C (C1, C2, C3...)
+   * gridNumber is the grid (1, 2, 3...)
+   * level is the level within grid (A to Z)
+   * position is the position within level (1, 2, 3...)
    */
-  generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binNumber) {
+  generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, level, position) {
     const paddedRack = String(rackNumber).padStart(2, '0');
     const paddedGrid = String(gridNumber).padStart(2, '0');
-    const binCode = this.numberToBinLetter(binNumber, gridNumber);
+    const binCode = `${level}${position}`;
     
-    return `${warehouseCode}1-${floor}-R${paddedRack}-G${paddedGrid}-${binCode}`;
+    return `${warehouseCode}-${floor}-R${paddedRack}-G${paddedGrid}-${binCode}`;
   }
 
   /**
-   * Convert bin number to letter format with position
-   * New format: Grid determines letter, position is sequential within grid
-   * Grid 1: A1, A2, A3... Grid 2: B1, B2, B3... Grid 3: C1, C2, C3...
-   * gridNumber determines the letter (1=A, 2=B, 3=C, etc.)
-   * binNumber is the position within that grid
+   * Convert level letter and position to bin code
+   * New format: Each grid has multiple levels (A to Z - 26 levels total)
+   * Each level within a grid has sequential positions (1, 2, 3, 4...)
+   * level is the level letter (A to Z)
+   * position is the position within that level (1, 2, 3...)
+   */
+  generateBinCode(level, position) {
+    return `${level}${position}`;
+  }
+
+  /**
+   * Legacy method for backward compatibility
+   * @deprecated Use generateBinCode(level, position) instead
    */
   numberToBinLetter(binNumber, gridNumber = 1) {
-    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    const letterIndex = (gridNumber - 1) % letters.length;
-    const letter = letters[letterIndex];
-    
-    return `${letter}${binNumber}`;
+    // For backward compatibility, assume level A
+    return `A${binNumber}`;
   }
 
   /**
    * Parse location code back to components
-   * Handles new format: WH1-GF-R04-G01-A1 where A1 = grid A, position 1
+   * Handles new format: WH1-GF-R04-G01-A1 where A1 = Level A, Position 1
    */
   parseLocationCode(locationCode) {
     const parts = locationCode.split('-');
     if (parts.length !== 5) return null;
 
     const binPart = parts[4]; // e.g., "A1"
-    const gridLetter = binPart.charAt(0); // "A"
+    const level = binPart.charAt(0); // "A"
     const position = parseInt(binPart.substring(1)) || 1; // "1"
-    const gridNumber = gridLetter.charCodeAt(0) - 'A'.charCodeAt(0) + 1; // A=1, B=2, C=3
 
     return {
       warehouse: parts[0],
@@ -51,7 +57,7 @@ export class RackService {
       rack: parseInt(parts[2].substring(1)),
       grid: parseInt(parts[3].substring(1)),
       bin: binPart,
-      gridNumber: gridNumber,
+      level: level,
       position: position
     };
   }
@@ -64,7 +70,8 @@ export class RackService {
       name,
       floor,
       gridCount,
-      binsPerGrid,
+      levelsPerGrid = ['A', 'B', 'C'],
+      binsPerLevel = 3,
       maxProductsPerBin,
       location,
       dimensions
@@ -82,10 +89,14 @@ export class RackService {
       if (!availability.available) {
         const suggestions = availability.suggestions.slice(0, 3).map(n => `R${String(n).padStart(2, '0')}`).join(', ');
         
+        const conflictTotalBins = (availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0) * 
+          ((availability.conflictRack.levelsPerGrid || ['A', 'B', 'C']).length * 
+           (availability.conflictRack.binsPerLevel || availability.conflictRack.binsPerGrid || availability.conflictRack.binsPerShelf || 0));
+        
         throw new Error(
           `❌ Row R${String(rackNumber).padStart(2, '0')} already exists!\n\n` +
           `📋 Existing rack: "${availability.conflictRack.name}"\n` +
-          `   └─ ${availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0} grids × ${availability.conflictRack.binsPerGrid || availability.conflictRack.binsPerShelf || 0} bins = ${(availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0) * (availability.conflictRack.binsPerGrid || availability.conflictRack.binsPerShelf || 0)} total bins\n\n` +
+          `   └─ ${availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0} grids × ${(availability.conflictRack.levelsPerGrid || ['A', 'B', 'C']).length} levels × ${availability.conflictRack.binsPerLevel || 3} bins per level = ${conflictTotalBins} total bins\n\n` +
           `💡 Suggested alternatives: ${suggestions}\n\n` +
           `Please choose a different rack number.`
         );
@@ -93,6 +104,8 @@ export class RackService {
 
       // Create the rack
       const rackCode = `R${String(rackNumber).padStart(2, '0')}`;
+      const totalBinsPerGrid = levelsPerGrid.length * binsPerLevel;
+      const totalBins = gridCount * totalBinsPerGrid;
       
       const rackData = {
         code: rackCode,
@@ -100,13 +113,14 @@ export class RackService {
         floor,
         rackNumber: rackConfig.rackNumber || 1,
         gridCount,
-        binsPerGrid,
+        levelsPerGrid,
+        binsPerLevel,
         maxProductsPerBin,
         location,
         dimensions,
         warehouseId,
         createdAt: new Date().toISOString(),
-        totalBins: gridCount * binsPerGrid,
+        totalBins,
         status: 'active'
       };
 
@@ -118,11 +132,14 @@ export class RackService {
       
       for (let gridNum = 1; gridNum <= gridCount; gridNum++) {
         // Create grid
+        const totalBinsInGrid = levelsPerGrid.length * binsPerLevel;
         const gridData = {
           rackId: rack.id,
           rackName: rack.name,
           level: gridNum,
-          binsCount: binsPerGrid,
+          binsCount: totalBinsInGrid,
+          levelsPerGrid: levelsPerGrid,
+          binsPerLevel: binsPerLevel,
           warehouseId,
           createdAt: new Date().toISOString()
         };
@@ -130,44 +147,49 @@ export class RackService {
         const grid = await warehouseService.createShelf(warehouseId, gridData);
         grids.push(grid);
 
-        // Create bins for this grid - sequential positions A1, A2, A3... for grid 1, B1, B2, B3... for grid 2
-        for (let position = 1; position <= binsPerGrid; position++) {
-          const locationCode = this.generateLocationCode(
-            warehouseCode,
-            floor,
-            rackConfig.rackNumber || 1,
-            gridNum,
-            position
-          );
+        // Create bins for each level within this grid
+        for (const level of levelsPerGrid) {
+          for (let position = 1; position <= binsPerLevel; position++) {
+            const locationCode = this.generateLocationCode(
+              warehouseCode,
+              floor,
+              rackConfig.rackNumber || 1,
+              gridNum,
+              level,
+              position
+            );
 
-          const binData = {
-            code: locationCode,
-            rackId: rack.id,
-            rackCode: rack.name,
-            shelfId: grid.id,
-            gridLevel: gridNum,
-            shelfLevel: gridNum, // For backward compatibility - now represents grid number
-            position: position,
-            capacity: maxProductsPerBin,
-            currentQty: 0,
-            status: 'available',
-            warehouseId,
-            floorCode: floor,
-            gridCode: `G${String(gridNum).padStart(2, '0')}`,
-            location: {
-              warehouse: warehouseCode,
-              floor: floor,
-              grid: gridNum,
-              rack: rack.rackNumber || 1,
-              gridNumber: gridNum,
+            const binData = {
+              code: locationCode,
+              rackId: rack.id,
+              rackCode: rack.name,
+              shelfId: grid.id,
+              gridLevel: gridNum,
+              shelfLevel: gridNum, // For backward compatibility - now represents grid number
+              level: level, // New: Level within grid (A, B, C, etc.)
               position: position,
-              fullCode: locationCode
-            },
-            createdAt: new Date().toISOString()
-          };
+              capacity: maxProductsPerBin,
+              currentQty: 0,
+              status: 'available',
+              warehouseId,
+              floorCode: floor,
+              gridCode: `G${String(gridNum).padStart(2, '0')}`,
+              levelCode: level,
+              location: {
+                warehouse: warehouseCode,
+                floor: floor,
+                grid: gridNum,
+                rack: rack.rackNumber || 1,
+                level: level,
+                position: position,
+                fullCode: locationCode
+              },
+              createdAt: new Date().toISOString()
+            };
 
-          const bin = await warehouseService.createBin(warehouseId, binData);
-          bins.push(bin);
+            const bin = await warehouseService.createBin(warehouseId, binData);
+            bins.push(bin);
+          }
         }
       }
 
@@ -179,9 +201,12 @@ export class RackService {
           totalGrids: grids.length,
           totalBins: bins.length,
           rackName: rack.name,
-          floor: floor
+          floor: floor,
+          levelsPerGrid: levelsPerGrid,
+          binsPerLevel: binsPerLevel
         }
       };
+
     } catch (error) {
       console.error('Error creating rack structure:', error);
       throw error;
@@ -197,7 +222,8 @@ export class RackService {
       name,
       floor,
       gridCount,
-      binsPerGrid,
+      levelsPerGrid = ['A', 'B', 'C'],
+      binsPerLevel = 3,
       maxProductsPerBin,
       location,
       dimensions
@@ -238,14 +264,27 @@ export class RackService {
       // Check for products in bins that might be affected
       const occupiedBins = rackBins.filter(bin => bin.currentQty > 0);
       const currentGridCount = existingRack.gridCount || existingRack.shelfCount || 0;
-      const currentBinsPerGrid = existingRack.binsPerGrid || existingRack.binsPerShelf || 0;
+      const currentLevelsPerGrid = existingRack.levelsPerGrid || ['A', 'B', 'C'];
+      const currentBinsPerLevel = existingRack.binsPerLevel || 3;
+      const currentTotalBinsPerGrid = currentLevelsPerGrid.length * currentBinsPerLevel;
+      const newTotalBinsPerGrid = levelsPerGrid.length * binsPerLevel;
+      
+      // Calculate bins per grid for the new configuration
+      const binsPerGrid = levelsPerGrid.length * binsPerLevel;
 
       // Check if we're reducing size and have products in bins that would be removed
-      if (gridCount < currentGridCount || binsPerGrid < currentBinsPerGrid) {
+      if (gridCount < currentGridCount || newTotalBinsPerGrid < currentTotalBinsPerGrid) {
         const binsToRemove = rackBins.filter(bin => {
           const gridLevel = bin.gridLevel || bin.shelfLevel || 1;
+          const binLevel = bin.level || 'A';
           const position = bin.position || 1;
-          return gridLevel > gridCount || position > binsPerGrid;
+          
+          // Check if this bin would be removed in the new configuration
+          if (gridLevel > gridCount) return true; // Grid removed
+          if (!levelsPerGrid.includes(binLevel)) return true; // Level removed
+          if (position > binsPerLevel) return true; // Position removed
+          
+          return false;
         });
 
         const occupiedBinsToRemove = binsToRemove.filter(bin => bin.currentQty > 0);
@@ -265,7 +304,9 @@ export class RackService {
         floor,
         rackNumber: newRackNumber,
         gridCount,
-        binsPerGrid,
+        levelsPerGrid,
+        binsPerLevel,
+        binsPerGrid, // Calculated field
         maxProductsPerBin,
         location,
         dimensions,
@@ -340,7 +381,7 @@ export class RackService {
    * Create additional bins when expanding rack
    */
   async createAdditionalBins(warehouseId, rackId, existingRack, rackConfig, warehouseCode) {
-    const { floor, gridCount, binsPerGrid, maxProductsPerBin } = rackConfig;
+    const { floor, gridCount, levelsPerGrid = ['A', 'B', 'C'], binsPerLevel = 3, maxProductsPerBin } = rackConfig;
     const existingBins = await warehouseService.getBins(warehouseId);
     const rackBins = existingBins.filter(bin => bin.rackId === rackId);
 
@@ -349,50 +390,65 @@ export class RackService {
     const maxExistingGrid = Math.max(...existingGrids, 0);
 
     for (let gridNum = 1; gridNum <= gridCount; gridNum++) {
-      // Skip if this grid already exists and is complete
+      // Get existing bins for this grid by level and position
       const gridBins = rackBins.filter(bin => (bin.gridLevel || bin.shelfLevel) === gridNum);
-      const existingBinsInGrid = gridBins.length;
-
-      if (existingBinsInGrid >= binsPerGrid) {
-        continue; // Grid is already complete
-      }
-
-      // Create missing bins in existing grids or all bins in new grids
-      const startPosition = existingBinsInGrid + 1;
       
-      for (let binNum = startPosition; binNum <= binsPerGrid; binNum++) {
-        const locationCode = this.generateLocationCode(
-          warehouseCode,
-          floor,
-          rackConfig.rackNumber || 1,
-          gridNum,
-          binNum
-        );
+      // Group existing bins by level
+      const binsByLevel = {};
+      gridBins.forEach(bin => {
+        const level = bin.level || 'A';
+        if (!binsByLevel[level]) binsByLevel[level] = [];
+        binsByLevel[level].push(bin);
+      });
 
-        const binData = {
-          code: locationCode,
-          rackId: rackId,
-          rackCode: existingRack.name,
-          shelfId: `shelf_${rackId}_${gridNum}`,
-          gridLevel: gridNum,
-          shelfLevel: gridNum, // For backward compatibility
-          position: binNum,
-          capacity: maxProductsPerBin,
-          currentQty: 0,
-          status: 'available',
-          warehouseId,
-          location: {
-            warehouse: warehouseCode,
-            floor: floor,
-            grid: gridNum,
-            rack: rackConfig.rackNumber || 1,
-            bin: binNum,
-            fullCode: locationCode
-          },
-          createdAt: new Date().toISOString()
-        };
+      // Create bins for each level within this grid
+      for (const level of levelsPerGrid) {
+        const existingBinsInLevel = binsByLevel[level] || [];
+        const maxExistingPosition = existingBinsInLevel.length > 0 
+          ? Math.max(...existingBinsInLevel.map(bin => bin.position || 1)) 
+          : 0;
 
-        await warehouseService.createBin(warehouseId, binData);
+        // Create missing bins in this level
+        for (let position = maxExistingPosition + 1; position <= binsPerLevel; position++) {
+          const locationCode = this.generateLocationCode(
+            warehouseCode,
+            floor,
+            rackConfig.rackNumber || 1,
+            gridNum,
+            level,
+            position
+          );
+
+          const binData = {
+            code: locationCode,
+            rackId: rackId,
+            rackCode: existingRack.name,
+            shelfId: `shelf_${rackId}_${gridNum}`,
+            gridLevel: gridNum,
+            shelfLevel: gridNum, // For backward compatibility
+            level: level, // New: Level within grid (A, B, C, etc.)
+            position: position,
+            capacity: maxProductsPerBin,
+            currentQty: 0,
+            status: 'available',
+            warehouseId,
+            floorCode: floor,
+            gridCode: `G${String(gridNum).padStart(2, '0')}`,
+            levelCode: level,
+            location: {
+              warehouse: warehouseCode,
+              floor: floor,
+              grid: gridNum,
+              rack: rackConfig.rackNumber || 1,
+              level: level,
+              position: position,
+              fullCode: locationCode
+            },
+            createdAt: new Date().toISOString()
+          };
+
+          await warehouseService.createBin(warehouseId, binData);
+        }
       }
     }
   }
@@ -525,8 +581,20 @@ export class RackService {
       errors.push('Grid count must be at least 1');
     }
     
-    if (!config.binsPerGrid || config.binsPerGrid < 1) {
-      errors.push('Bins per grid must be at least 1');
+    // Validate levels per grid
+    if (!config.levelsPerGrid || !Array.isArray(config.levelsPerGrid) || config.levelsPerGrid.length === 0) {
+      errors.push('At least one level per grid is required');
+    }
+    
+    // Validate bins per level
+    if (!config.binsPerLevel || config.binsPerLevel < 1) {
+      errors.push('Bins per level must be at least 1');
+    }
+    
+    // Calculate and validate bins per grid (for backward compatibility)
+    const calculatedBinsPerGrid = (config.levelsPerGrid || []).length * (config.binsPerLevel || 0);
+    if (calculatedBinsPerGrid < 1) {
+      errors.push('Total bins per grid must be at least 1 (levels × bins per level)');
     }
     
     if (!config.maxProductsPerBin || config.maxProductsPerBin < 1) {
@@ -590,6 +658,7 @@ export class RackService {
    * Generate bin code for compatibility (legacy method)
    * This actually generates the full location code for the bin
    * gridLevel now represents the grid number, position is the position within that grid
+   * For backward compatibility, we assume level A when no level is specified
    */
   generateBinCode(rackCode, gridLevel, position, warehouseCode = 'WH', floor = 'GF') {
     // Extract rack number from rackCode (e.g., "R01" -> 1)
@@ -597,7 +666,10 @@ export class RackService {
     const gridNumber = parseInt(gridLevel) || 1;
     const binPosition = parseInt(position) || 1;
     
-    return this.generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binPosition);
+    // For backward compatibility, assume level A when not specified
+    const level = 'A';
+    
+    return this.generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, level, binPosition);
   }
 
   /**

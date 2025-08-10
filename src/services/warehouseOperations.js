@@ -413,13 +413,23 @@ export const warehouseOperations = {
           }
           
           // 5. QUATERNARY SORT: Grid level (first grid first for easier access)
+          // Note: In new hierarchical format, shelfLevel represents grid number (1, 2, 3...)
           const shelfDiff = (a.shelfLevel || 1) - (b.shelfLevel || 1);
           if (shelfDiff !== 0) {
             console.log(`  → Sorted by grid level: ${a.shelfLevel} vs ${b.shelfLevel}`);
             return shelfDiff;
           }
           
-          // 6. FINAL SORT: Bin code for consistent ordering
+          // 6. QUINARY SORT: Level within grid (A, B, C, D, E, F, G, H)
+          const aLevel = a.level || 'A';
+          const bLevel = b.level || 'A';
+          const levelDiff = aLevel.localeCompare(bLevel);
+          if (levelDiff !== 0) {
+            console.log(`  → Sorted by level: ${aLevel} vs ${bLevel}`);
+            return levelDiff;
+          }
+          
+          // 7. FINAL SORT: Bin code for consistent ordering
           return (a.code || '').localeCompare(b.code || '');
         });
 
@@ -907,12 +917,19 @@ export const warehouseOperations = {
           if (gridCompare !== 0) return gridCompare;
           
           // Then sort by grid number (ascending) - Grid 1, Grid 2, Grid 3
-          // Note: In new format, shelfLevel represents grid number
+          // Note: In new hierarchical format, shelfLevel represents grid number
+          // Each grid contains multiple levels (A, B, C, D, E, F, G, H) with positions
           const aGridNumber = parseInt(a.shelfLevel) || 1;
           const bGridNumber = parseInt(b.shelfLevel) || 1;
           if (aGridNumber !== bGridNumber) return aGridNumber - bGridNumber;
           
-          // Finally sort by position within grid (ascending) - A1, A2, A3 for grid 1, B1, B2, B3 for grid 2, etc.
+          // Then sort by level within grid (A, B, C, D, E, F, G, H)
+          const aLevel = a.level || 'A';
+          const bLevel = b.level || 'A';
+          const levelCompare = aLevel.localeCompare(bLevel);
+          if (levelCompare !== 0) return levelCompare;
+          
+          // Finally sort by position within level (1, 2, 3, 4, etc.)
           const aPosition = parseInt(a.position) || 1;
           const bPosition = parseInt(b.position) || 1;
           if (aPosition !== bPosition) return aPosition - bPosition;
@@ -925,7 +942,7 @@ export const warehouseOperations = {
         // Log sorting results for debugging
         console.log('📊 Empty bins sorted in order:', 
           emptyBins.slice(0, 5).map(bin => 
-            `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, GridNum: ${bin.shelfLevel || 1}, Pos: ${bin.position || 1})`
+            `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, GridNum: ${bin.shelfLevel || 1}, Level: ${bin.level || 'A'}, Pos: ${bin.position || 1})`
           ));
         
         // Allocate to empty bins - fill each to capacity before moving to next
@@ -938,7 +955,7 @@ export const warehouseOperations = {
             allocationPlan.push({
               bin,
               allocatedQuantity: allocateQty,
-              reason: `New placement in empty bin - ${allocateQty} units (Rack: ${bin.rackCode}, Grid: ${bin.shelfLevel})`,
+              reason: `New placement in empty bin - ${allocateQty} units (Rack: ${bin.rackCode}, Grid: ${bin.shelfLevel}, Level: ${bin.level || 'A'})`,
               priority: 2,
               newTotal: allocateQty,
               utilization: ((allocateQty / bin.capacity) * 100).toFixed(1)
