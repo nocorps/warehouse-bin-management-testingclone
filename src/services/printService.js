@@ -490,6 +490,101 @@ export class PrintService {
     const successfulItems = executionResults.items.filter(item => item.status === 'Completed');
     const failedItems = executionResults.items.filter(item => item.status === 'Failed');
     
+    // Generate simplified report data (matching Excel report format)
+    const reportRows = [];
+    successfulItems.forEach(item => {
+      // Get the original quantities from the pickedBins array if available
+      const hasBinDetails = item.pickedBins && Array.isArray(item.pickedBins) && item.pickedBins.length > 0;
+      const totalQty = parseInt(item.pickedQty || item.pickedQuantity || item.quantity) || 0;
+      
+      if (hasBinDetails) {
+        // Use the detailed bin information to create precise report rows
+        item.pickedBins.forEach(bin => {
+          // Get the bin location and clean it
+          let locationStr = bin.binCode || '';
+          
+          // Apply location cleaning to each bin code
+          if (locationStr.includes('Row') && locationStr.includes('WH01') && locationStr.includes('WH1')) {
+            const wh1Index = locationStr.indexOf('WH1-');
+            if (wh1Index > 0) {
+              locationStr = locationStr.substring(wh1Index);
+            }
+          }
+          
+          reportRows.push({
+            barcode: item.barcode || item.sku || '',
+            location: locationStr,
+            quantity: bin.quantity || 0,
+            operation: 'Pick'
+          });
+        });
+      } 
+      else {
+        // Process locations from comma-separated string
+        let locationStr = item.location || item.locations || 'N/A';
+        
+        // Clean location string (remove duplicates and extra formatting)
+        if (locationStr !== 'N/A') {
+          // Split by comma first, then clean each location
+          const rawLocations = locationStr.split(',').map(loc => loc.trim());
+          const cleanedLocations = rawLocations.map(loc => {
+            // Clean location format: "WH01-GF-Row 1-G01-WH1-GF-R01-G01-B1" -> "WH1-GF-R01-G01-B1"
+            if (loc.includes('Row') && loc.includes('WH01') && loc.includes('WH1')) {
+              const wh1Index = loc.indexOf('WH1-');
+              if (wh1Index > 0) {
+                return loc.substring(wh1Index);
+              }
+            }
+            
+            // More general pattern handling
+            const parts = loc.split('-');
+            const whIndices = [];
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i].match(/^WH\d+$/)) {
+                whIndices.push(i);
+              }
+            }
+            
+            if (whIndices.length > 1) {
+              const lastWhIndex = whIndices[whIndices.length - 1];
+              return parts.slice(lastWhIndex).join('-');
+            }
+            
+            return loc;
+          });
+          locationStr = cleanedLocations.join(', ');
+        }
+        
+        // Check if location contains multiple bins (comma-separated)
+        if (locationStr.includes(',')) {
+          const locations = locationStr.split(',').map(loc => loc.trim());
+          
+          // Split the quantities evenly across locations (since we don't have individual bin quantities)
+          const baseQtyPerBin = Math.floor(totalQty / locations.length);
+          const remainder = totalQty % locations.length;
+          
+          // Create a row for each location with its portion of the quantity
+          locations.forEach((location, index) => {
+            const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+            reportRows.push({
+              barcode: item.barcode || item.sku || '',
+              location: location,
+              quantity: binQty,
+              operation: 'Pick'
+            });
+          });
+        } else {
+          // Single location, just show the total quantity
+          reportRows.push({
+            barcode: item.barcode || item.sku || '',
+            location: locationStr,
+            quantity: totalQty,
+            operation: 'Pick'
+          });
+        }
+      }
+    });
+    
     let reportHTML = `
       <div class="pick-report">
         <div class="report-header">
@@ -507,41 +602,34 @@ export class PrintService {
           <table class="stats-table">
             <tr><td><strong>Total Items:</strong></td><td>${executionResults.summary.total}</td></tr>
             <tr><td><strong>Successful:</strong></td><td>${executionResults.summary.successful}</td></tr>
-            <tr><td><strong>Partial:</strong></td><td>${executionResults.summary.partial || 0}</td></tr>
             <tr><td><strong>Failed:</strong></td><td>${executionResults.summary.failed}</td></tr>
             <tr><td><strong>Success Rate:</strong></td><td>${((executionResults.summary.successful / executionResults.summary.total) * 100).toFixed(1)}%</td></tr>
-            <tr><td><strong>Total Quantity Picked:</strong></td><td>${executionResults.items.reduce((sum, item) => sum + (parseInt(item.pickedQty) || 0), 0)}</td></tr>
-            <tr><td><strong>Total Bins Used:</strong></td><td>${executionResults.items.reduce((sum, item) => sum + (item.pickedBins ? item.pickedBins.length : 0), 0)}</td></tr>
+            <tr><td><strong>Total Quantity Picked:</strong></td><td>${reportRows.reduce((sum, row) => sum + (parseInt(row.quantity) || 0), 0)}</td></tr>
+            <tr><td><strong>Total Locations Used:</strong></td><td>${reportRows.length}</td></tr>
             <tr><td><strong>FIFO Compliance:</strong></td><td>${executionResults.summary.fifoCompliance || 'Yes'}</td></tr>
           </table>
         </div>
         ` : ''}
 
-        ${includeDetails && successfulItems.length > 0 ? `
+        ${includeDetails && reportRows.length > 0 ? `
         <div class="successful-items">
-          <h2>Successfully Picked Items (${successfulItems.length})</h2>
+          <h2>Successfully Picked Items (${reportRows.length} location entries)</h2>
           <table class="items-table">
             <thead>
               <tr>
-                <th>SKU</th>
-                <th>Requested Qty</th>
-                <th>Picked Qty</th>
-                <th>Source Bin(s)</th>
-                <th>Lot Number</th>
-                <th>Expiry Date</th>
-                <th>Pick Date</th>
+                <th>Barcode</th>
+                <th>Location</th>
+                <th>Quantity</th>
+                <th>Operation</th>
               </tr>
             </thead>
             <tbody>
-              ${successfulItems.map(item => `
+              ${reportRows.map(row => `
                 <tr>
-                  <td>${item.barcode || item.sku || 'N/A'}</td>
-                  <td>${item.quantity || item.requestedQuantity || 'N/A'}</td>
-                  <td>${item.pickedQty || item.pickedQuantity || 'N/A'}</td>
-                  <td>${item.location || item.locations || (Array.isArray(item.sourceBins) ? item.sourceBins.join(', ') : (item.sourceBin || 'N/A'))}</td>
-                  <td>${item.lotNumber || 'N/A'}</td>
-                  <td>${item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'N/A'}</td>
-                  <td>${item.executedAt ? new Date(item.executedAt).toLocaleDateString() : (item.pickDate ? new Date(item.pickDate).toLocaleDateString() : 'N/A')}</td>
+                  <td>${row.barcode}</td>
+                  <td>${row.location}</td>
+                  <td>${row.quantity}</td>
+                  <td>${row.operation}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -555,8 +643,8 @@ export class PrintService {
           <table class="items-table">
             <thead>
               <tr>
-                <th>SKU</th>
-                <th>Requested Qty</th>
+                <th>Barcode</th>
+                <th>Quantity</th>
                 <th>Error</th>
               </tr>
             </thead>
@@ -1705,144 +1793,77 @@ export class PrintService {
       const barcode = item.barcode || item.sku || 'N/A';
       const totalQty = parseInt(item.pickedQty || item.pickedQuantity || item.quantity) || 0;
       
-      // Determine the locations
+      // Check if we have detailed bin information
       if (Array.isArray(item.pickedBins) && item.pickedBins.length > 0) {
-        // If we have detailed picked bins info with quantities
+        // Use the detailed bin information to create precise report rows
         item.pickedBins.forEach(bin => {
-          // Construct full location path from bin info if available
-          let fullLocation = bin.location || '';
-          if (!fullLocation && (bin.code || bin.binCode)) {
-            // Try to construct a full location path
-            const warehouseCode = item.warehouseCode || executionResults.warehouseCode || 'WH01';
-            const floorCode = bin.floorCode || 'GF';
-            const rackCode = bin.rackCode || item.rackCode || 'R01';
-            const gridCode = bin.gridCode || bin.shelfLevel || 'G01';
-            const binCode = bin.code || bin.binCode || 'A1';
-            
-            fullLocation = `${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${binCode}`;
+          // Get the bin location and clean it
+          let locationStr = bin.binCode || '';
+          
+          // Apply location cleaning to each bin code
+          if (locationStr.includes('Row') && locationStr.includes('WH01') && locationStr.includes('WH1')) {
+            const wh1Index = locationStr.indexOf('WH1-');
+            if (wh1Index > 0) {
+              locationStr = locationStr.substring(wh1Index);
+            }
           }
           
           tableHTML += `
             <tr>
               <td>${barcode}</td>
-              <td>${fullLocation || (bin.code || bin.binCode || 'N/A')}</td>
-              <td>${bin.quantity || bin.pickedQuantity || 'N/A'}</td>
+              <td>${locationStr || 'N/A'}</td>
+              <td>${bin.quantity || 0}</td>
               <td>Pick</td>
             </tr>
           `;
         });
       } else {
-        // Check if it's a comma-separated list or array of source bins
-        let locations = [];
+        // Process locations from comma-separated string
+        let locationStr = item.location || item.locations || 'N/A';
         
-        if (Array.isArray(item.sourceBins) && item.sourceBins.length > 0) {
-          // Check if sourceBins have full location info
-          item.sourceBins.forEach(bin => {
-            // If it's just a string, it might be just the bin code
-            let fullLocation = typeof bin === 'string' ? bin : (bin.location || bin.code || '');
-            
-            // If it looks like just a bin code (simple string without dashes), try to construct full path
-            if (fullLocation && !fullLocation.includes('-') && fullLocation.length <= 3) {
-              const warehouseCode = item.warehouseCode || executionResults.warehouseCode || 'WH01';
-              const floorCode = bin.floorCode || item.floorCode || 'GF';
-              const rackCode = bin.rackCode || item.rackCode || 'R01';
-              const gridCode = bin.gridCode || bin.shelfLevel || item.gridCode || 'G01';
-              
-              fullLocation = `${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${fullLocation}`;
+        // Clean location string (remove duplicates and extra formatting)
+        if (locationStr !== 'N/A') {
+          // Split by comma first, then clean each location
+          const rawLocations = locationStr.split(',').map(loc => loc.trim());
+          const cleanedLocations = rawLocations.map(loc => {
+            // Clean location format: "WH01-GF-Row 1-G01-WH1-GF-R01-G01-B1" -> "WH1-GF-R01-G01-B1"
+            if (loc.includes('Row') && loc.includes('WH01') && loc.includes('WH1')) {
+              const wh1Index = loc.indexOf('WH1-');
+              if (wh1Index > 0) {
+                return loc.substring(wh1Index);
+              }
             }
             
-            locations.push(fullLocation);
+            // More general pattern handling
+            const parts = loc.split('-');
+            const whIndices = [];
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i].match(/^WH\d+$/)) {
+                whIndices.push(i);
+              }
+            }
+            
+            if (whIndices.length > 1) {
+              const lastWhIndex = whIndices[whIndices.length - 1];
+              return parts.slice(lastWhIndex).join('-');
+            }
+            
+            return loc;
           });
-        } else {
-          const locationStr = item.location || item.locations || 'N/A';
-          
-          // Process both dash-connected and comma-separated locations
-          if (typeof locationStr === 'string') {
-            // First check for dash-concatenated full locations 
-            // (like WH01-SF-R10-G02-WH01-GF-R01-G02-A2)
-            if (locationStr.includes('-') && locationStr.split('-').length > 5) {
-              // Parse out multiple full locations that are connected with dashes
-              const parts = locationStr.split('-');
-              let locationParts = [];
-              let currentLocation = [];
-              
-              // Assume the first part is always part of the first location
-              currentLocation.push(parts[0]);
-              
-              // Look for warehouse code patterns (like WH01) in the middle
-              for (let i = 1; i < parts.length; i++) {
-                // If we find a warehouse prefix (not at the beginning)
-                if (parts[i].match(/^WH\d+$/)) {
-                  // Add the current completed location
-                  locationParts.push(currentLocation.join('-'));
-                  // Start a new location
-                  currentLocation = [parts[i]];
-                } else {
-                  // Add to current location
-                  currentLocation.push(parts[i]);
-                }
-              }
-              
-              // Add the last location
-              if (currentLocation.length > 0) {
-                locationParts.push(currentLocation.join('-'));
-              }
-              
-              // Use the parsed locations if we found multiple
-              if (locationParts.length > 1) {
-                locations = locationParts;
-              }
-            }
-            
-            // If we didn't find multiple locations with dash parsing, 
-            // check for comma-separated locations
-            if (locations.length === 0 && locationStr.includes(',')) {
-              const splitLocations = locationStr.split(',').map(loc => loc.trim());
-              
-              // Check if these look like full locations or just bin codes
-              splitLocations.forEach(loc => {
-                // If it looks like just a bin code (simple string without dashes), try to construct full path
-                if (loc && !loc.includes('-') && loc.length <= 3) {
-                  const warehouseCode = item.warehouseCode || executionResults.warehouseCode || 'WH01';
-                  const floorCode = item.floorCode || 'GF';
-                  const rackCode = item.rackCode || 'R01';
-                  const gridCode = item.gridCode || 'G01';
-                  
-                  locations.push(`${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${loc}`);
-                } else {
-                  locations.push(loc);
-                }
-              });
-            } 
-            
-            // If we still don't have locations, treat as a single location
-            if (locations.length === 0) {
-              // Single location string
-              let location = locationStr;
-              
-              // If it looks like just a bin code (simple string without dashes), try to construct full path
-              if (location && !location.includes('-') && location.length <= 3) {
-                const warehouseCode = item.warehouseCode || executionResults.warehouseCode || 'WH01';
-                const floorCode = item.floorCode || 'GF';
-                const rackCode = item.rackCode || 'R01';
-                const gridCode = item.gridCode || 'G01';
-                
-                location = `${warehouseCode}-${floorCode}-${rackCode}-${gridCode}-${location}`;
-              }
-              
-              locations = [location];
-            }
-          }
+          locationStr = cleanedLocations.join(', ');
         }
         
-        // If we have multiple locations but no detailed quantities, split them evenly
-        if (locations.length > 1) {
+        // Check if there are multiple locations
+        if (locationStr.includes(',')) {
+          const locations = locationStr.split(',').map(loc => loc.trim());
+          
+          // Split quantities evenly across locations
           const baseQtyPerBin = Math.floor(totalQty / locations.length);
           const remainder = totalQty % locations.length;
           
-          // Add individual location rows
           locations.forEach((location, index) => {
             const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
+            
             tableHTML += `
               <tr>
                 <td>${barcode}</td>
@@ -1852,12 +1873,12 @@ export class PrintService {
               </tr>
             `;
           });
-        } else if (locations.length === 1) {
+        } else {
           // Single location
           tableHTML += `
             <tr>
               <td>${barcode}</td>
-              <td>${locations[0]}</td>
+              <td>${locationStr}</td>
               <td>${totalQty}</td>
               <td>Pick</td>
             </tr>

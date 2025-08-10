@@ -96,7 +96,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
         floor: rack.floor || 'GF',
         gridCount: rack.gridCount || rack.shelfCount || 5,
         binsPerGrid: rack.binsPerGrid || rack.binsPerShelf || 10,
-        maxProductsPerBin: rack.maxProductsPerBin || 100,
+        maxProductsPerBin: rack.maxProductsPerBin || 10,
         rackNumber: rack.rackNumber || 1,
         location: {
           aisle: rack.location?.aisle || '',

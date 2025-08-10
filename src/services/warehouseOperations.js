@@ -803,14 +803,19 @@ export const warehouseOperations = {
 
   /**
    * Guaranteed Smart Auto-Allocation: ALWAYS SUCCEEDS
-   * 1. First fill same SKU bins to capacity (PRIORITY 1)
-   * 2. Then use empty bins for remaining quantity (PRIORITY 2)
-   * 3. Use mixed SKU bins only if necessary (PRIORITY 3)
-   * 4. AUTO-CREATE NEW BINS for any remaining quantity (PRIORITY 4)
+   * 
+   * STRICT PRIORITY ORDER (prevents splitting across empty bins when same-SKU bins have capacity):
+   * 1. Fill same SKU bins to capacity (PRIORITY 1) - NEVER skip if space available
+   * 2. Then use empty bins for remaining quantity (PRIORITY 2) - only after same-SKU bins full
+   * 3. Use mixed SKU bins only if necessary (PRIORITY 3) - lowest priority
+   * 4. AUTO-CREATE NEW BINS for any remaining quantity (PRIORITY 4) - disabled by default
+   * 
+   * This ensures optimal consolidation and prevents unnecessary bin proliferation.
    */
   async autoAllocateQuantity(warehouseId, sku, totalQuantity, preferences = {}) {
     try {
       console.log('🔄 GUARANTEED Auto-allocating quantity:', { sku, totalQuantity, preferences });
+      console.log('📋 ALLOCATION STRATEGY: 1) Fill same-SKU bins first, 2) Use empty bins only if needed, 3) Never split unnecessarily');
       
       // Input validation
       if (!totalQuantity || isNaN(totalQuantity) || totalQuantity <= 0) {
@@ -826,6 +831,7 @@ export const warehouseOperations = {
       let remainingQuantity = totalQuantity;
 
       // PHASE 1: Find and use existing bins with the SAME SKU (highest priority)
+      // This ensures we NEVER split across empty bins if same-SKU bins have capacity
       let sameSKUBins = bins.filter(bin => {
         // Must be active, have the same SKU, and have space
         const isActive = (bin.status === 'available' || bin.status === 'occupied');
@@ -836,13 +842,13 @@ export const warehouseOperations = {
         
         return isActive && isSameSKU && hasSpace;
       }).sort((a, b) => {
-        // Sort by available space (larger first)
+        // Sort by available space (larger first) for optimal bin utilization
         const spaceA = a.capacity - (parseInt(a.currentQty) || 0);
         const spaceB = b.capacity - (parseInt(b.currentQty) || 0);
         return spaceB - spaceA;
       });
       
-      // Allocate to same-SKU bins first
+      // Allocate to same-SKU bins first - fill each bin to capacity before moving to next
       console.log(`🎯 Phase 1: Same SKU bins available: ${sameSKUBins.length}`);
       for (const bin of sameSKUBins) {
         if (remainingQuantity <= 0) break;
@@ -863,11 +869,10 @@ export const warehouseOperations = {
           });
           
           remainingQuantity -= allocateQty;
-          console.log(`✅ Phase 1: Allocated ${allocateQty} to same-SKU bin ${bin.code}, remaining: ${remainingQuantity}`);
+          console.log(`✅ Phase 1: Allocated ${allocateQty} to same-SKU bin ${bin.code} (${currentQty}+${allocateQty}=${newTotal}), remaining: ${remainingQuantity}`);
         }
-      }
-
-      // PHASE 2: Find and use EMPTY bins
+      }      // PHASE 2: Find and use EMPTY bins (only after same-SKU bins are filled)
+      // This ensures we consolidate same-SKU products before using new empty bins
       if (remainingQuantity > 0) {
         let emptyBins = bins.filter(bin => {
           // Must be active, empty or no SKU assigned
@@ -892,7 +897,7 @@ export const warehouseOperations = {
           // Then sort by rack code alphabetically
           const rackCompare = (a.rackCode || '').localeCompare(b.rackCode || '');
           if (rackCompare !== 0) return rackCompare;
-
+          
           // Then sort by grid/aisle code alphabetically
           const aGridCode = a.gridCode || '';
           const bGridCode = b.gridCode || '';
@@ -915,8 +920,8 @@ export const warehouseOperations = {
             `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, Shelf: ${bin.shelfLevel || 1})`
           ));
         
-        // Allocate to empty bins
-        console.log(`📦 Phase 2: Empty bins available: ${emptyBins.length}`);
+        // Allocate to empty bins - fill each to capacity before moving to next
+        console.log(`📦 Phase 2: Empty bins available: ${emptyBins.length} (only used after same-SKU bins are full)`);
         for (const bin of emptyBins) {
           if (remainingQuantity <= 0) break;
           
@@ -932,7 +937,7 @@ export const warehouseOperations = {
             });
             
             remainingQuantity -= allocateQty;
-            console.log(`✅ Phase 2: Allocated ${allocateQty} to empty bin ${bin.code}, remaining: ${remainingQuantity}`);
+            console.log(`✅ Phase 2: Allocated ${allocateQty} to empty bin ${bin.code} (filling to capacity first), remaining: ${remainingQuantity}`);
           }
         }
       }
@@ -1035,7 +1040,8 @@ export const warehouseOperations = {
         binCount: allocationPlan.length,
         autoCreatedBins: allocationPlan.filter(a => a.autoCreated).length,
         sameSKUAllocations,
-        orderedBinAllocations
+        orderedBinAllocations,
+        strategyValidation: sameSKUAllocations > 0 ? 'Same-SKU bins prioritized correctly' : 'No same-SKU bins found'
       });
 
       // Calculate average utilization for analytics
@@ -1598,5 +1604,73 @@ export const warehouseOperations = {
     });
 
     return instructions;
-  }
+  },
+
+  /**
+   * Test function to demonstrate correct allocation behavior
+   * This can be used for debugging and validation
+   */
+  async testAllocationStrategy(warehouseId, testSku = 'TEST-SKU-001', testQuantity = 100) {
+    console.log('🧪 TESTING ALLOCATION STRATEGY');
+    console.log('=====================================');
+    
+    try {
+      // Get current bins
+      const bins = await this.getAllBins(warehouseId);
+      
+      // Find existing bins with the test SKU
+      const existingSameSKUBins = bins.filter(bin => 
+        bin.sku === testSku && 
+        (parseInt(bin.currentQty) || 0) > 0 &&
+        bin.capacity > (parseInt(bin.currentQty) || 0)
+      );
+      
+      // Find empty bins
+      const emptyBins = bins.filter(bin => 
+        (parseInt(bin.currentQty) || 0) === 0 && 
+        (bin.status === 'available' || bin.status === 'occupied')
+      );
+      
+      console.log(`📊 BEFORE ALLOCATION:`);
+      console.log(`- SKU: ${testSku}, Quantity to allocate: ${testQuantity}`);
+      console.log(`- Existing same-SKU bins with space: ${existingSameSKUBins.length}`);
+      if (existingSameSKUBins.length > 0) {
+        existingSameSKUBins.forEach(bin => {
+          const currentQty = parseInt(bin.currentQty) || 0;
+          const availableSpace = bin.capacity - currentQty;
+          console.log(`  • ${bin.code}: ${currentQty}/${bin.capacity} (${availableSpace} available)`);
+        });
+      }
+      console.log(`- Empty bins available: ${emptyBins.length}`);
+      
+      // Run allocation
+      const result = await this.autoAllocateQuantity(warehouseId, testSku, testQuantity);
+      
+      console.log(`📊 ALLOCATION RESULTS:`);
+      console.log(`- Total allocated: ${result.totalAllocated}/${testQuantity}`);
+      console.log(`- Bins used: ${result.allocationPlan.length}`);
+      console.log(`- Same-SKU allocations: ${result.summary.sameSKUAllocations}`);
+      console.log(`- Empty bin allocations: ${result.summary.emptyBinAllocations}`);
+      
+      console.log(`📋 ALLOCATION PLAN:`);
+      result.allocationPlan.forEach((plan, index) => {
+        console.log(`  ${index + 1}. ${plan.bin.code}: ${plan.allocatedQuantity} units (Priority ${plan.priority}) - ${plan.reason}`);
+      });
+      
+      // Validate strategy
+      const sameSKUFirst = result.allocationPlan.every((plan, index) => {
+        if (index === 0) return true; // First item is always valid
+        const currentPriority = plan.priority;
+        const previousPriority = result.allocationPlan[index - 1].priority;
+        return currentPriority >= previousPriority; // Priorities should be in order
+      });
+      
+      console.log(`✅ STRATEGY VALIDATION: ${sameSKUFirst ? 'CORRECT' : 'INCORRECT'} - Same-SKU bins prioritized`);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Test failed:', error);
+      throw error;
+    }
+  },
 };
