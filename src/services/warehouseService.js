@@ -201,6 +201,21 @@ export const warehouseService = {
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   },
 
+  async getRack(warehouseId, rackId) {
+    try {
+      const rackRef = doc(db, 'WHT', warehouseId, 'racks', rackId);
+      const rackDoc = await getDoc(rackRef);
+      
+      if (rackDoc.exists()) {
+        return { id: rackDoc.id, ...rackDoc.data() };
+      }
+      return null;
+    } catch (error) {
+      console.error('Error getting rack:', error);
+      throw error;
+    }
+  },
+
   subscribeToRacks(warehouseId, callback) {
     const racksRef = collection(db, 'WHT', warehouseId, 'racks');
     const q = query(racksRef, orderBy('createdAt', 'desc'));

@@ -60,8 +60,24 @@ export class RackService {
       const warehouse = await warehouseService.getWarehouse(warehouseId);
       const warehouseCode = warehouse.code || 'WH';
 
+      // Check if rack number already exists with detailed error message
+      const rackNumber = rackConfig.rackNumber || 1;
+      const availability = await this.checkRackNumberAvailability(warehouseId, rackNumber);
+      
+      if (!availability.available) {
+        const suggestions = availability.suggestions.slice(0, 3).map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+        
+        throw new Error(
+          `❌ Row R${String(rackNumber).padStart(2, '0')} already exists!\n\n` +
+          `📋 Existing rack: "${availability.conflictRack.name}"\n` +
+          `   └─ ${availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0} grids × ${availability.conflictRack.binsPerGrid || availability.conflictRack.binsPerShelf || 0} bins = ${(availability.conflictRack.gridCount || availability.conflictRack.shelfCount || 0) * (availability.conflictRack.binsPerGrid || availability.conflictRack.binsPerShelf || 0)} total bins\n\n` +
+          `💡 Suggested alternatives: ${suggestions}\n\n` +
+          `Please choose a different rack number.`
+        );
+      }
+
       // Create the rack
-      const rackCode = `R${String(rackConfig.rackNumber || 1).padStart(2, '0')}`;
+      const rackCode = `R${String(rackNumber).padStart(2, '0')}`;
       
       const rackData = {
         code: rackCode,
@@ -149,6 +165,288 @@ export class RackService {
       };
     } catch (error) {
       console.error('Error creating rack structure:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update existing rack structure - supports continuous updates
+   * Handles: increasing/decreasing bins, changing capacity, relocating products
+   */
+  async updateRackStructure(warehouseId, rackId, rackConfig) {
+    const {
+      name,
+      floor,
+      gridCount,
+      binsPerGrid,
+      maxProductsPerBin,
+      location,
+      dimensions
+    } = rackConfig;
+
+    try {
+      // Get warehouse info for location code
+      const warehouse = await warehouseService.getWarehouse(warehouseId);
+      const warehouseCode = warehouse.code || 'WH';
+
+      // Get existing rack data
+      const existingRack = await this.getRack(warehouseId, rackId);
+      if (!existingRack) {
+        throw new Error('Rack not found');
+      }
+
+      // Check if rack number changed and if it conflicts
+      const newRackNumber = rackConfig.rackNumber || existingRack.rackNumber || 1;
+      if (newRackNumber !== existingRack.rackNumber) {
+        const availability = await this.checkRackNumberAvailability(warehouseId, newRackNumber, rackId);
+        
+        if (!availability.available) {
+          const suggestions = availability.suggestions.slice(0, 3).map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+          
+          throw new Error(
+            `❌ Row R${String(newRackNumber).padStart(2, '0')} already exists!\n\n` +
+            `📋 Existing rack: "${availability.conflictRack.name}"\n\n` +
+            `💡 Available alternatives: ${suggestions}\n\n` +
+            `Please choose a different number.`
+          );
+        }
+      }
+
+      // Get existing bins for this rack
+      const existingBins = await warehouseService.getBins(warehouseId);
+      const rackBins = existingBins.filter(bin => bin.rackId === rackId);
+      
+      // Check for products in bins that might be affected
+      const occupiedBins = rackBins.filter(bin => bin.currentQty > 0);
+      const currentGridCount = existingRack.gridCount || existingRack.shelfCount || 0;
+      const currentBinsPerGrid = existingRack.binsPerGrid || existingRack.binsPerShelf || 0;
+
+      // Check if we're reducing size and have products in bins that would be removed
+      if (gridCount < currentGridCount || binsPerGrid < currentBinsPerGrid) {
+        const binsToRemove = rackBins.filter(bin => {
+          const gridLevel = bin.gridLevel || bin.shelfLevel || 1;
+          const position = bin.position || 1;
+          return gridLevel > gridCount || position > binsPerGrid;
+        });
+
+        const occupiedBinsToRemove = binsToRemove.filter(bin => bin.currentQty > 0);
+        if (occupiedBinsToRemove.length > 0) {
+          const productList = occupiedBinsToRemove.map(bin => 
+            `${bin.code}: ${bin.sku || 'Unknown'} (${bin.currentQty} units)`
+          ).join(', ');
+          throw new Error(`Cannot reduce rack size. The following bins contain products: ${productList}. Please relocate these products first.`);
+        }
+      }
+
+      // Update rack data
+      const rackCode = `R${String(newRackNumber).padStart(2, '0')}`;
+      const updatedRackData = {
+        code: rackCode,
+        name,
+        floor,
+        rackNumber: newRackNumber,
+        gridCount,
+        binsPerGrid,
+        maxProductsPerBin,
+        location,
+        dimensions,
+        totalBins: gridCount * binsPerGrid,
+        status: 'active',
+        // Also update legacy field names for compatibility
+        shelfCount: gridCount,
+        binsPerShelf: binsPerGrid,
+        updatedAt: new Date().toISOString()
+      };
+
+      await warehouseService.updateRack(warehouseId, rackId, updatedRackData);
+
+      // Handle bin updates/creation/deletion
+      const targetBinCount = gridCount * binsPerGrid;
+      const currentBinCount = rackBins.length;
+
+      if (targetBinCount > currentBinCount) {
+        // Need to create new bins
+        await this.createAdditionalBins(warehouseId, rackId, existingRack, rackConfig, warehouseCode);
+      } else if (targetBinCount < currentBinCount) {
+        // Need to remove bins (already checked they're empty)
+        await this.removeExcessBins(warehouseId, rackBins, gridCount, binsPerGrid);
+      }
+
+      // Update existing bin capacities if maxProductsPerBin changed
+      if (maxProductsPerBin !== (existingRack.maxProductsPerBin || 100)) {
+        await this.updateBinCapacities(warehouseId, rackBins, maxProductsPerBin);
+      }
+
+      // Update location codes if rack number, floor, or warehouse code changed
+      if (newRackNumber !== existingRack.rackNumber || floor !== existingRack.floor) {
+        await this.updateBinLocationCodes(warehouseId, rackBins, warehouseCode, floor, newRackNumber);
+      }
+
+      return {
+        success: true,
+        rack: { id: rackId, ...updatedRackData },
+        summary: {
+          updated: true,
+          totalBins: targetBinCount,
+          rackName: name,
+          floor: floor,
+          changes: {
+            binsAdded: Math.max(0, targetBinCount - currentBinCount),
+            binsRemoved: Math.max(0, currentBinCount - targetBinCount),
+            capacityUpdated: maxProductsPerBin !== (existingRack.maxProductsPerBin || 100),
+            locationCodesUpdated: newRackNumber !== existingRack.rackNumber || floor !== existingRack.floor
+          }
+        }
+      };
+
+    } catch (error) {
+      console.error('Error updating rack structure:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get rack by ID
+   */
+  async getRack(warehouseId, rackId) {
+    try {
+      return await warehouseService.getRack(warehouseId, rackId);
+    } catch (error) {
+      console.error('Error getting rack:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create additional bins when expanding rack
+   */
+  async createAdditionalBins(warehouseId, rackId, existingRack, rackConfig, warehouseCode) {
+    const { floor, gridCount, binsPerGrid, maxProductsPerBin } = rackConfig;
+    const existingBins = await warehouseService.getBins(warehouseId);
+    const rackBins = existingBins.filter(bin => bin.rackId === rackId);
+
+    // Get existing grids
+    const existingGrids = [...new Set(rackBins.map(bin => bin.gridLevel || bin.shelfLevel || 1))];
+    const maxExistingGrid = Math.max(...existingGrids, 0);
+
+    for (let gridNum = 1; gridNum <= gridCount; gridNum++) {
+      // Skip if this grid already exists and is complete
+      const gridBins = rackBins.filter(bin => (bin.gridLevel || bin.shelfLevel) === gridNum);
+      const existingBinsInGrid = gridBins.length;
+
+      if (existingBinsInGrid >= binsPerGrid) {
+        continue; // Grid is already complete
+      }
+
+      // Create missing bins in existing grids or all bins in new grids
+      const startPosition = existingBinsInGrid + 1;
+      
+      for (let binNum = startPosition; binNum <= binsPerGrid; binNum++) {
+        const locationCode = this.generateLocationCode(
+          warehouseCode,
+          floor,
+          rackConfig.rackNumber || 1,
+          gridNum,
+          binNum
+        );
+
+        const binData = {
+          code: locationCode,
+          rackId: rackId,
+          rackCode: existingRack.name,
+          shelfId: `shelf_${rackId}_${gridNum}`,
+          gridLevel: gridNum,
+          shelfLevel: gridNum, // For backward compatibility
+          position: binNum,
+          capacity: maxProductsPerBin,
+          currentQty: 0,
+          status: 'available',
+          warehouseId,
+          location: {
+            warehouse: warehouseCode,
+            floor: floor,
+            grid: gridNum,
+            rack: rackConfig.rackNumber || 1,
+            bin: binNum,
+            fullCode: locationCode
+          },
+          createdAt: new Date().toISOString()
+        };
+
+        await warehouseService.createBin(warehouseId, binData);
+      }
+    }
+  }
+
+  /**
+   * Remove excess bins when reducing rack size
+   */
+  async removeExcessBins(warehouseId, rackBins, targetGridCount, targetBinsPerGrid) {
+    const binsToRemove = rackBins.filter(bin => {
+      const gridLevel = bin.gridLevel || bin.shelfLevel || 1;
+      const position = bin.position || 1;
+      return gridLevel > targetGridCount || position > targetBinsPerGrid;
+    });
+
+    for (const bin of binsToRemove) {
+      await warehouseService.deleteBin(warehouseId, bin.id);
+    }
+  }
+
+  /**
+   * Update bin capacities
+   */
+  async updateBinCapacities(warehouseId, rackBins, newCapacity) {
+    for (const bin of rackBins) {
+      if (bin.capacity !== newCapacity) {
+        await warehouseService.updateBin(warehouseId, bin.id, {
+          capacity: newCapacity
+        });
+      }
+    }
+  }
+
+  /**
+   * Update bin location codes when rack details change
+   */
+  async updateBinLocationCodes(warehouseId, rackBins, warehouseCode, floor, rackNumber) {
+    for (const bin of rackBins) {
+      const gridLevel = bin.gridLevel || bin.shelfLevel || 1;
+      const position = bin.position || 1;
+      
+      const newLocationCode = this.generateLocationCode(
+        warehouseCode,
+        floor,
+        rackNumber,
+        gridLevel,
+        position
+      );
+
+      if (bin.code !== newLocationCode) {
+        await warehouseService.updateBin(warehouseId, bin.id, {
+          code: newLocationCode,
+          location: {
+            warehouse: warehouseCode,
+            floor: floor,
+            grid: gridLevel,
+            rack: rackNumber,
+            bin: position,
+            fullCode: newLocationCode
+          }
+        });
+      }
+    }
+  }
+
+  /**
+   * Delete rack structure and all associated bins
+   */
+  async deleteRackStructure(warehouseId, rackId) {
+    try {
+      await warehouseService.deleteRack(warehouseId, rackId);
+      return { success: true };
+    } catch (error) {
+      console.error('Error deleting rack structure:', error);
       throw error;
     }
   }
@@ -280,6 +578,56 @@ export class RackService {
     const binNumber = parseInt(position) || 1;
     
     return this.generateLocationCode(warehouseCode, floor, rackNumber, gridNumber, binNumber);
+  }
+
+  /**
+   * Check if rack number is available
+   */
+  async checkRackNumberAvailability(warehouseId, rackNumber, excludeRackId = null) {
+    try {
+      const existingRacks = await warehouseService.getRacks(warehouseId);
+      const duplicateRack = existingRacks.find(rack => 
+        rack.rackNumber === rackNumber && rack.id !== excludeRackId
+      );
+      
+      if (duplicateRack) {
+        // Get suggested available numbers
+        const suggestedNumbers = this.getSuggestedRackNumbers(existingRacks, 5);
+        
+        return {
+          available: false,
+          conflictRack: duplicateRack,
+          suggestions: suggestedNumbers,
+          message: `Row R${String(rackNumber).padStart(2, '0')} already exists in "${duplicateRack.name}"`
+        };
+      }
+      
+      return {
+        available: true,
+        message: `Row R${String(rackNumber).padStart(2, '0')} is available`
+      };
+    } catch (error) {
+      console.error('Error checking rack number availability:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get suggested available rack numbers
+   */
+  getSuggestedRackNumbers(existingRacks, count = 5) {
+    const existingNumbers = existingRacks.map(r => r.rackNumber || 1).sort((a, b) => a - b);
+    const suggestions = [];
+    
+    // Find gaps in the sequence and add new numbers
+    for (let i = 1; i <= Math.max(20, existingNumbers.length + count); i++) {
+      if (!existingNumbers.includes(i)) {
+        suggestions.push(i);
+        if (suggestions.length >= count) break;
+      }
+    }
+    
+    return suggestions;
   }
 }
 

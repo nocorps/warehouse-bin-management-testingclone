@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -60,7 +60,7 @@ const steps = [
 ];
 
 function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
-  const { currentWarehouse } = useWarehouse();
+  const { currentWarehouse, racks } = useWarehouse();
   const { showSuccess, showError } = useNotification();
   const [activeStep, setActiveStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -68,7 +68,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
 
   const isEdit = !!rack;
   
-  const { control, handleSubmit, watch, reset, formState: { errors } } = useForm({
+  const { control, handleSubmit, watch, reset, formState: { errors }, setError, clearErrors, setValue, trigger } = useForm({
     defaultValues: {
       name: rack?.name || '',
       floor: rack?.floor || 'GF',
@@ -88,9 +88,110 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
     }
   });
 
+  // Auto-fill form when editing existing rack
+  useEffect(() => {
+    if (isEdit && rack) {
+      reset({
+        name: rack.name || '',
+        floor: rack.floor || 'GF',
+        gridCount: rack.gridCount || rack.shelfCount || 5,
+        binsPerGrid: rack.binsPerGrid || rack.binsPerShelf || 10,
+        maxProductsPerBin: rack.maxProductsPerBin || 100,
+        rackNumber: rack.rackNumber || 1,
+        location: {
+          aisle: rack.location?.aisle || '',
+          section: rack.location?.section || ''
+        },
+        dimensions: {
+          height: rack.dimensions?.height || '',
+          width: rack.dimensions?.width || '',
+          depth: rack.dimensions?.depth || ''
+        }
+      });
+    }
+  }, [isEdit, rack, reset]);
+
   const watchedValues = watch();
 
+  // Auto-suggest next available rack number for new racks based on selected floor
+  useEffect(() => {
+    if (!isEdit && racks.length > 0 && watchedValues.floor) {
+      const suggestedNumber = getNextSuggestedRackNumber(watchedValues.floor);
+      setValue('rackNumber', suggestedNumber);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [racks, isEdit, setValue, watchedValues.floor]);
+
+  // Helper function to get available rack numbers for a specific floor
+  const getAvailableRackNumbers = (floor = null) => {
+    const currentFloor = floor || watchedValues.floor || 'GF';
+    const existingNumbers = racks
+      .filter(r => r.floor === currentFloor)
+      .map(r => r.rackNumber || 1)
+      .sort((a, b) => a - b);
+    const availableNumbers = [];
+    
+    // Find gaps in the sequence
+    for (let i = 1; i <= Math.max(20, existingNumbers.length + 5); i++) {
+      if (!existingNumbers.includes(i)) {
+        availableNumbers.push(i);
+      }
+      if (availableNumbers.length >= 5) break; // Show max 5 suggestions
+    }
+    
+    return availableNumbers;
+  };
+
+  // Helper function to suggest next rack number for a specific floor
+  const getNextSuggestedRackNumber = (floor = null) => {
+    const available = getAvailableRackNumbers(floor);
+    const currentFloor = floor || watchedValues.floor || 'GF';
+    const racksOnFloor = racks.filter(r => r.floor === currentFloor);
+    return available.length > 0 ? available[0] : (racksOnFloor.length + 1);
+  };
+
   const handleNext = () => {
+    // Enhanced validation with immediate feedback
+    if (Object.keys(errors).length > 0) {
+      const errorMessages = Object.entries(errors).map(([field, error]) => {
+        if (field === 'rackNumber' && error.message.includes('already exists')) {
+          return `🚫 Rack Number Issue:\n${error.message}`;
+        }
+        return `⚠️ ${field}: ${error.message}`;
+      }).join('\n\n');
+      
+      showError(`Please fix the following validation errors:\n\n${errorMessages}`);
+      return;
+    }
+
+    // Check if this is an edit and if we're reducing the rack size
+    if (isEdit && rack && activeStep === 1) {
+      const currentGridCount = rack.gridCount || rack.shelfCount || 0;
+      const currentBinsPerGrid = rack.binsPerGrid || rack.binsPerShelf || 0;
+      const newGridCount = watchedValues.gridCount;
+      const newBinsPerGrid = watchedValues.binsPerGrid;
+      
+      if (newGridCount < currentGridCount || newBinsPerGrid < currentBinsPerGrid) {
+        const currentTotal = currentGridCount * currentBinsPerGrid;
+        const newTotal = newGridCount * newBinsPerGrid;
+        const binsToRemove = currentTotal - newTotal;
+        
+        const confirmed = window.confirm(
+          `⚠️ RACK SIZE REDUCTION WARNING\n\n` +
+          `You are reducing rack "${rack.name}" from:\n` +
+          `• Current: ${currentGridCount} grids × ${currentBinsPerGrid} bins = ${currentTotal} total bins\n` +
+          `• New: ${newGridCount} grids × ${newBinsPerGrid} bins = ${newTotal} total bins\n\n` +
+          `This will REMOVE ${binsToRemove} bin location(s).\n\n` +
+          `⚠️ IMPORTANT: Make sure NO PRODUCTS are stored in the bins that will be removed!\n\n` +
+          `The system will check for products and prevent the update if any bins contain inventory.\n\n` +
+          `Do you want to continue?`
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+    }
+
     if (activeStep === 2) {
       handleSave();
     } else if (activeStep === 1) {
@@ -152,18 +253,63 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
       
       if (isEdit) {
         // Update existing rack
-        await rackService.updateRackStructure(currentWarehouse.id, rack.id, data);
-        showSuccess('Rowupdated successfully');
+        const result = await rackService.updateRackStructure(currentWarehouse.id, rack.id, data);
+        
+        // Provide detailed feedback about what was updated
+        let message = `✅ Row R${String(data.rackNumber).padStart(2, '0')} "${data.name}" updated successfully`;
+        const changes = [];
+        
+        if (result.summary.changes) {
+          if (result.summary.changes.binsAdded > 0) {
+            changes.push(`${result.summary.changes.binsAdded} bins added`);
+          }
+          if (result.summary.changes.binsRemoved > 0) {
+            changes.push(`${result.summary.changes.binsRemoved} bins removed`);
+          }
+          if (result.summary.changes.capacityUpdated) {
+            changes.push(`bin capacity updated to ${data.maxProductsPerBin}`);
+          }
+          if (result.summary.changes.locationCodesUpdated) {
+            changes.push('location codes updated');
+          }
+          
+          if (changes.length > 0) {
+            message += `\n\nChanges made:\n• ${changes.join('\n• ')}`;
+          }
+        }
+        
+        showSuccess(message);
       } else {
         // Create new rack
         const result = await rackService.createRackWithStructure(currentWarehouse.id, data);
-        showSuccess(`Rowcreated with ${result.summary.totalBins} bins`);
+        showSuccess(
+          `✅ Row R${String(data.rackNumber).padStart(2, '0')} "${data.name}" created successfully!\n\n` +
+          `Created:\n• ${result.summary.totalBins} bins across ${data.gridCount} grids\n• Total capacity: ${result.summary.totalBins * data.maxProductsPerBin} products`
+        );
       }
       
       onSave();
       handleClose();
     } catch (error) {
-      showError(`Error ${isEdit ? 'updating' : 'creating'} rack: ${error.message}`);
+      // Enhanced error handling with specific messages
+      let errorMessage = error.message;
+      
+      if (errorMessage.includes('already exists')) {
+        const suggestedNumbers = racks.map(r => r.rackNumber || 1).sort((a, b) => a - b);
+        let nextAvailable = 1;
+        for (const num of suggestedNumbers) {
+          if (num === nextAvailable) {
+            nextAvailable++;
+          } else {
+            break;
+          }
+        }
+        errorMessage += `\n\n💡 Suggestion: Try using R${String(nextAvailable).padStart(2, '0')} instead.`;
+      } else if (errorMessage.includes('contain products')) {
+        errorMessage = `❌ Cannot reduce rack size!\n\n${errorMessage}\n\n💡 Solution: Please relocate products from these bins first, then try updating the rack again.`;
+      }
+      
+      showError(`❌ Error ${isEdit ? 'updating' : 'creating'} rack:\n\n${errorMessage}`);
     } finally {
       setLoading(false);
     }
@@ -181,7 +327,25 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
       <DialogTitle>
-        {isEdit ? 'Edit RowConfiguration' : 'Create New Rack'}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {isEdit ? (
+            <>
+              <EditIcon color="primary" />
+              <Typography variant="h6">Edit Row Configuration</Typography>
+              <Chip 
+                label={`R${String(rack?.rackNumber || 1).padStart(2, '0')}`} 
+                size="small" 
+                color="primary" 
+                variant="outlined"
+              />
+            </>
+          ) : (
+            <>
+              <AddIcon color="primary" />
+              <Typography variant="h6">Create New Row</Typography>
+            </>
+          )}
+        </Box>
       </DialogTitle>
       
       <DialogContent>
@@ -194,11 +358,11 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                   <Controller
                     name="name"
                     control={control}
-                    rules={{ required: 'Rowname is required' }}
+                    rules={{ required: 'Row name is required' }}
                     render={({ field }) => (
                       <TextField
                         {...field}
-                        label="RowName"
+                        label="Row Name"
                         fullWidth
                         error={!!errors.name}
                         helperText={errors.name?.message}
@@ -210,15 +374,74 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                   <Controller
                     name="rackNumber"
                     control={control}
-                    rules={{ required: 'Rownumber is required' }}
+                    rules={{ 
+                      required: 'Row number is required',
+                      min: { value: 1, message: 'Minimum rack number is 1' },
+                      max: { value: 99, message: 'Maximum rack number is 99 (format: R01-R99)' },
+                      validate: (value) => {
+                        const numValue = parseInt(value);
+                        if (isNaN(numValue) || numValue < 1 || numValue > 99) {
+                          return 'Please enter a valid rack number (1-99, format: R01-R99)';
+                        }
+                        
+                        // Get current floor selection
+                        const currentFloor = watchedValues.floor;
+                        
+                        if (!isEdit) {
+                          // Check for new rack creation - same rack number on same floor
+                          const existing = racks.find(r => r.rackNumber === numValue && r.floor === currentFloor);
+                          if (existing) {
+                            const availableNumbers = getAvailableRackNumbers().slice(0, 3);
+                            const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+                            return `❌ Rack R${String(numValue).padStart(2, '0')} already exists on floor "${currentFloor}" in "${existing.name}"!\n\n💡 Available on ${currentFloor}: ${suggestions}`;
+                          }
+                        } else {
+                          // Check for editing existing rack - same rack number on same floor (excluding current rack)
+                          const existing = racks.find(r => r.rackNumber === numValue && r.floor === currentFloor && r.id !== rack.id);
+                          if (existing) {
+                            const availableNumbers = getAvailableRackNumbers().slice(0, 3);
+                            const suggestions = availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ');
+                            return `❌ Rack R${String(numValue).padStart(2, '0')} already exists on floor "${currentFloor}" in "${existing.name}"!\n\n💡 Available on ${currentFloor}: ${suggestions}`;
+                          }
+                        }
+                        return true;
+                      }
+                    }}
                     render={({ field }) => (
                       <TextField
                         {...field}
-                        label="RowNumber"
+                        label="Row Number"
                         type="number"
+                        inputProps={{ 
+                          min: 1, 
+                          max: 99,
+                          step: 1
+                        }}
                         fullWidth
                         error={!!errors.rackNumber}
-                        helperText={errors.rackNumber?.message}
+                        helperText={
+                          errors.rackNumber?.message || 
+                          (isEdit 
+                            ? `Current: R${String(rack?.rackNumber || 1).padStart(2, '0')} • Enter number 1-99 for floor "${watchedValues.floor}"`
+                            : `Will create: R${String(field.value || 1).padStart(2, '0')} on floor "${watchedValues.floor}" • Next available: ${(() => {
+                                const availableNumbers = getAvailableRackNumbers(watchedValues.floor).slice(0, 3);
+                                return availableNumbers.length > 0 ? availableNumbers.map(n => `R${String(n).padStart(2, '0')}`).join(', ') : 'None';
+                              })()}`)
+                        }
+                        InputProps={{
+                          startAdornment: <span style={{ color: '#1976d2', marginRight: '4px', fontWeight: 'bold', fontSize: '16px' }}>R</span>
+                        }}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          // Only allow numbers 1-99
+                          if (value === '' || (parseInt(value) >= 1 && parseInt(value) <= 99)) {
+                            field.onChange(e);
+                            // Trigger validation immediately on change for real-time feedback
+                            setTimeout(() => {
+                              trigger('rackNumber');
+                            }, 0);
+                          }
+                        }}
                       />
                     )}
                   />
@@ -231,7 +454,17 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                     render={({ field }) => (
                       <FormControl fullWidth error={!!errors.floor}>
                         <InputLabel>Floor</InputLabel>
-                        <Select {...field} label="Floor">
+                        <Select 
+                          {...field} 
+                          label="Floor"
+                          onChange={(e) => {
+                            field.onChange(e);
+                            // Trigger rack number validation when floor changes
+                            setTimeout(() => {
+                              trigger('rackNumber');
+                            }, 0);
+                          }}
+                        >
                           {floorOptions.map(option => (
                             <MenuItem key={option.value} value={option.value}>
                               {option.label}
@@ -330,9 +563,15 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
                 Location Code Format Preview
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
-                Format: WH-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
-                <br />
-                Example: {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, B1, C1... Grid 2: A2, B2, C2...)
+                <Typography variant="body1" gutterBottom>
+                  <strong>Format:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G{String(1).padStart(2, '0')}-A1
+                </Typography>
+                <Typography variant="body2" gutterBottom>
+                  <strong>Example:</strong> {currentWarehouse?.code || 'WH'}-{watchedValues.floor}-R{String(watchedValues.rackNumber || 1).padStart(2, '0')}-G01-A1 (Grid 1: A1, B1, C1... Grid 2: A2, B2, C2...)
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'info.dark', fontWeight: 'bold' }}>
+                  📋 Row Format: R{String(watchedValues.rackNumber || 1).padStart(2, '0')} (R + two-digit number: R01, R02, R03... NOT RR, RRR)
+                </Typography>
               </Alert>
             </StepContent>
           </Step>
@@ -343,35 +582,112 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
               {previewData && (
                 <Box sx={{ mt: 2 }}>
                   <Typography variant="h6" gutterBottom>
-                    Configuration Summary
+                    Configuration {isEdit ? 'Changes' : 'Summary'}
                   </Typography>
+                  
+                  {isEdit && (
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        📝 Changes Preview for Row R{String(rack?.rackNumber || 1).padStart(2, '0')} "{rack?.name}"
+                      </Typography>
+                      <Typography variant="body2">
+                        <strong>Current:</strong> {rack?.gridCount || rack?.shelfCount || 0} grids × {rack?.binsPerGrid || rack?.binsPerShelf || 0} bins = {(rack?.gridCount || rack?.shelfCount || 0) * (rack?.binsPerGrid || rack?.binsPerShelf || 0)} total bins
+                        <br />
+                        <strong>New:</strong> {previewData.gridCount} grids × {previewData.binsPerGrid} bins = {previewData.totalBins} total bins
+                        {previewData.totalBins > (rack?.totalBins || 0) && (
+                          <span style={{ color: 'green' }}> (+{previewData.totalBins - (rack?.totalBins || 0)} bins will be added)</span>
+                        )}
+                        {previewData.totalBins < (rack?.totalBins || 0) && (
+                          <span style={{ color: 'orange' }}> (-{(rack?.totalBins || 0) - previewData.totalBins} bins will be removed)</span>
+                        )}
+                      </Typography>
+                    </Alert>
+                  )}
                   
                   <TableContainer component={Paper} sx={{ mb: 2 }}>
                     <Table>
                       <TableBody>
                         <TableRow>
-                          <TableCell><strong>RowName</strong></TableCell>
-                          <TableCell>{previewData.name}</TableCell>
+                          <TableCell><strong>Row Name</strong></TableCell>
+                          <TableCell>
+                            {previewData.name}
+                            {isEdit && rack?.name !== previewData.name && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell><strong>Row Number</strong></TableCell>
+                          <TableCell>
+                            R{String(previewData.rackNumber).padStart(2, '0')}
+                            {isEdit && rack?.rackNumber !== previewData.rackNumber && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell><strong>Floor</strong></TableCell>
-                          <TableCell>{previewData.floor}</TableCell>
+                          <TableCell>
+                            {previewData.floor}
+                            {isEdit && rack?.floor !== previewData.floor && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell><strong>Total Grids</strong></TableCell>
-                          <TableCell>{previewData.gridCount}</TableCell>
+                          <TableCell>
+                            {previewData.gridCount}
+                            {isEdit && (rack?.gridCount || rack?.shelfCount) !== previewData.gridCount && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell><strong>Bins per Grid</strong></TableCell>
-                          <TableCell>{previewData.binsPerGrid}</TableCell>
+                          <TableCell>
+                            {previewData.binsPerGrid}
+                            {isEdit && (rack?.binsPerGrid || rack?.binsPerShelf) !== previewData.binsPerGrid && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell><strong>Total Bins</strong></TableCell>
-                          <TableCell>{previewData.totalBins}</TableCell>
+                          <TableCell>
+                            {previewData.totalBins}
+                            {isEdit && (rack?.totalBins || 0) !== previewData.totalBins && (
+                              <Chip 
+                                label={previewData.totalBins > (rack?.totalBins || 0) ? "Increased" : "Decreased"} 
+                                size="small" 
+                                color={previewData.totalBins > (rack?.totalBins || 0) ? "success" : "warning"} 
+                                sx={{ ml: 1 }} 
+                              />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell><strong>Max Products per Bin</strong></TableCell>
+                          <TableCell>
+                            {previewData.maxProductsPerBin}
+                            {isEdit && rack?.maxProductsPerBin !== previewData.maxProductsPerBin && (
+                              <Chip label="Changed" size="small" color="warning" sx={{ ml: 1 }} />
+                            )}
+                          </TableCell>
                         </TableRow>
                         <TableRow>
                           <TableCell><strong>Total Capacity</strong></TableCell>
-                          <TableCell>{previewData.totalCapacity} products</TableCell>
+                          <TableCell>
+                            {previewData.totalCapacity} products
+                            {isEdit && (rack?.totalBins || 0) * (rack?.maxProductsPerBin || 100) !== previewData.totalCapacity && (
+                              <Chip 
+                                label={previewData.totalCapacity > (rack?.totalBins || 0) * (rack?.maxProductsPerBin || 100) ? "Increased" : "Decreased"} 
+                                size="small" 
+                                color={previewData.totalCapacity > (rack?.totalBins || 0) * (rack?.maxProductsPerBin || 100) ? "success" : "warning"} 
+                                sx={{ ml: 1 }} 
+                              />
+                            )}
+                          </TableCell>
                         </TableRow>
                       </TableBody>
                     </Table>
@@ -414,7 +730,7 @@ function RackConfigurationDialog({ open, onClose, rack = null, onSave }) {
           onClick={handleNext}
           disabled={loading}
         >
-          {loading ? 'Creating...' : (activeStep === 2 ? 'Create Rack' : 'Next')}
+          {loading ? (isEdit ? 'Updating...' : 'Creating...') : (activeStep === 2 ? (isEdit ? 'Update Rack' : 'Create Rack') : 'Next')}
         </Button>
       </DialogActions>
     </Dialog>
