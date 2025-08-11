@@ -1,0 +1,180 @@
+<Window x:Class="WarehouseManagement.Desktop.Views.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        TextElement.FontWeight="Regular"
+        TextElement.FontSize="13"
+        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextRenderingMode="Auto"
+        Background="{DynamicResource MaterialDesignPaper}"
+        FontFamily="{DynamicResource MaterialDesignFont}"
+        Title="Warehouse Management - Login" 
+        Height="500" 
+        Width="800"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1*"/>
+            <ColumnDefinition Width="1*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Left Side - Branding -->
+        <materialDesign:ColorZone Grid.Column="0" Mode="PrimaryDark">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <!-- Logo -->
+                    <materialDesign:PackIcon Kind="Warehouse" Width="80" Height="80" 
+                                           Foreground="White" Margin="0,0,0,24"/>
+                    
+                    <!-- App Title -->
+                    <TextBlock Text="Warehouse Management Pro" 
+                               Style="{StaticResource MaterialDesignHeadline4TextBlock}" 
+                               Foreground="White" 
+                               TextAlignment="Center"
+                               Margin="0,0,0,8"/>
+                    
+                    <!-- Subtitle -->
+                    <TextBlock Text="High-Performance Desktop Application" 
+                               Style="{StaticResource MaterialDesignSubtitle1TextBlock}" 
+                               Foreground="White" 
+                               Opacity="0.8"
+                               TextAlignment="Center"
+                               Margin="0,0,0,32"/>
+
+                    <!-- Features -->
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <materialDesign:PackIcon Kind="CheckCircle" Foreground="LightGreen" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="Real-time Inventory Management" Foreground="White" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <materialDesign:PackIcon Kind="CheckCircle" Foreground="LightGreen" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="Advanced Pick &amp; Put-Away Operations" Foreground="White" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <materialDesign:PackIcon Kind="CheckCircle" Foreground="LightGreen" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="Comprehensive Reporting &amp; Analytics" Foreground="White" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,8">
+                            <materialDesign:PackIcon Kind="CheckCircle" Foreground="LightGreen" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="Barcode Integration &amp; Label Printing" Foreground="White" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </materialDesign:ColorZone>
+
+        <!-- Right Side - Login Form -->
+        <Grid Grid.Column="1" Margin="48">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="1" MaxWidth="300">
+                <!-- Welcome Text -->
+                <TextBlock Text="Welcome Back" 
+                           Style="{StaticResource MaterialDesignHeadline5TextBlock}" 
+                           TextAlignment="Center"
+                           Margin="0,0,0,8"/>
+                
+                <TextBlock Text="Please sign in to your account" 
+                           Style="{StaticResource MaterialDesignSubtitle2TextBlock}" 
+                           TextAlignment="Center"
+                           Opacity="0.7"
+                           Margin="0,0,0,32"/>
+
+                <!-- Error Message -->
+                <Border Background="{DynamicResource ValidationErrorBrush}" 
+                        CornerRadius="4" 
+                        Padding="12,8"
+                        Margin="0,0,0,16"
+                        Visibility="{Binding ErrorMessage, Converter={StaticResource StringNotEmptyToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="AlertCircle" 
+                                               Foreground="White" 
+                                               VerticalAlignment="Center" 
+                                               Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding ErrorMessage}" 
+                                   Foreground="White" 
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Username -->
+                <TextBox materialDesign:HintAssist.Hint="Username"
+                         Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                         Margin="0,0,0,16"
+                         IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}">
+                    <TextBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding LoginCommand}"/>
+                    </TextBox.InputBindings>
+                </TextBox>
+
+                <!-- Password -->
+                <PasswordBox materialDesign:HintAssist.Hint="Password"
+                            x:Name="PasswordBox"
+                            Style="{StaticResource MaterialDesignOutlinedPasswordBox}"
+                            Margin="0,0,0,16"
+                            IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}">
+                    <PasswordBox.InputBindings>
+                        <KeyBinding Key="Enter" Command="{Binding LoginCommand}"/>
+                    </PasswordBox.InputBindings>
+                </PasswordBox>
+
+                <!-- Remember Me -->
+                <CheckBox Content="Remember me" 
+                          IsChecked="{Binding RememberMe}"
+                          Margin="0,0,0,24"
+                          IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Login Button -->
+                <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                        Content="Sign In"
+                        Command="{Binding LoginCommand}"
+                        IsDefault="True"
+                        Height="40"
+                        Margin="0,0,0,16"
+                        IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}">
+                    <Button.Content>
+                        <StackPanel Orientation="Horizontal">
+                            <ProgressBar Style="{StaticResource MaterialDesignCircularProgressBar}"
+                                       Width="16" Height="16"
+                                       IsIndeterminate="True"
+                                       Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                       Margin="0,0,8,0"/>
+                            <TextBlock Text="{Binding IsLoading, Converter={StaticResource BooleanToStringConverter}, ConverterParameter='Signing In...|Sign In'}"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button.Content>
+                </Button>
+
+                <!-- Cancel Button -->
+                <Button Style="{StaticResource MaterialDesignOutlinedButton}"
+                        Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        Height="40"
+                        IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}"/>
+
+                <!-- Version Info -->
+                <TextBlock Text="Version 2.0.1" 
+                           Style="{StaticResource MaterialDesignCaptionTextBlock}" 
+                           HorizontalAlignment="Center"
+                           Opacity="0.5"
+                           Margin="0,24,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

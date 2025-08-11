@@ -1,0 +1,243 @@
+<UserControl x:Class="WarehouseManagement.Desktop.Views.BinManagementView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:local="clr-namespace:WarehouseManagement.Desktop.Views"
+             TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+             TextElement.FontWeight="Regular"
+             TextElement.FontSize="13"
+             TextOptions.TextFormattingMode="Ideal"
+             TextOptions.TextRenderingMode="Auto"
+             Background="{DynamicResource MaterialDesignPaper}"
+             FontFamily="{DynamicResource MaterialDesignFont}">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <materialDesign:Card Grid.Row="0" Margin="0,0,0,16" Padding="16">
+            <StackPanel>
+                <TextBlock Style="{StaticResource MaterialDesignHeadline5TextBlock}" Text="Bin Management" Margin="0,0,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- Warehouse Selection -->
+                    <ComboBox Grid.Column="0" Width="200" Margin="0,0,16,0"
+                              materialDesign:HintAssist.Hint="Select Warehouse"
+                              ItemsSource="{Binding Warehouses}"
+                              SelectedItem="{Binding SelectedWarehouse}"
+                              DisplayMemberPath="Name"/>
+                    
+                    <!-- Rack Selection -->
+                    <ComboBox Grid.Column="1" Width="200" Margin="0,0,16,0"
+                              materialDesign:HintAssist.Hint="Select Rack (Optional)"
+                              ItemsSource="{Binding Racks}"
+                              SelectedItem="{Binding SelectedRack}"
+                              DisplayMemberPath="Code"/>
+                    
+                    <!-- Action Buttons -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource MaterialDesignRaisedButton}" 
+                                Content="Load Data" 
+                                Command="{Binding LoadDataCommand}"
+                                Margin="0,0,8,0"/>
+                        <Button Style="{StaticResource MaterialDesignRaisedButton}" 
+                                Content="Import" 
+                                Command="{Binding ImportBinsCommand}"
+                                Margin="0,0,8,0"/>
+                        <Button Style="{StaticResource MaterialDesignRaisedButton}" 
+                                Content="Export" 
+                                Command="{Binding ExportBinsCommand}"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </materialDesign:Card>
+
+        <!-- Filters and Search -->
+        <materialDesign:Card Grid.Row="1" Margin="0,0,0,16" Padding="16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <!-- Search -->
+                <TextBox Grid.Column="0" 
+                         materialDesign:HintAssist.Hint="Search bins by position or rack code..."
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                         Margin="0,0,16,0"/>
+                
+                <!-- Status Filter -->
+                <ComboBox Grid.Column="1" Width="150" Margin="0,0,16,0"
+                          materialDesign:HintAssist.Hint="Filter by Status"
+                          SelectedItem="{Binding FilterStatus}">
+                    <ComboBox.Items>
+                        <x:Static Member="local:BinStatus.All"/>
+                        <x:Static Member="local:BinStatus.Available"/>
+                        <x:Static Member="local:BinStatus.Occupied"/>
+                        <x:Static Member="local:BinStatus.Reserved"/>
+                        <x:Static Member="local:BinStatus.Blocked"/>
+                        <x:Static Member="local:BinStatus.Maintenance"/>
+                    </ComboBox.Items>
+                </ComboBox>
+                
+                <!-- Search Button -->
+                <Button Grid.Column="2" 
+                        Style="{StaticResource MaterialDesignRaisedButton}"
+                        Content="Search"
+                        Command="{Binding SearchBinsCommand}"/>
+            </Grid>
+        </materialDesign:Card>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="1*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Bins List -->
+            <materialDesign:Card Grid.Column="0" Margin="0,0,8,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    
+                    <TextBlock Grid.Row="0" Style="{StaticResource MaterialDesignSubtitle1TextBlock}" 
+                               Text="Bins" Margin="16,16,16,8"/>
+                    
+                    <DataGrid Grid.Row="1" 
+                              ItemsSource="{Binding Bins}"
+                              SelectedItem="{Binding SelectedBin}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="True"
+                              materialDesign:DataGridAssist.CellPadding="8">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Position" Binding="{Binding Position}" Width="80"/>
+                            <DataGridTextColumn Header="Rack" Binding="{Binding RackCode}" Width="80"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100"/>
+                            <DataGridTextColumn Header="Type" Binding="{Binding BinType}" Width="80"/>
+                            <DataGridTextColumn Header="Current Weight" Binding="{Binding CurrentWeight, StringFormat=F2}" Width="100"/>
+                            <DataGridTextColumn Header="Max Weight" Binding="{Binding MaxWeight, StringFormat=F2}" Width="100"/>
+                            <DataGridTextColumn Header="Current Volume" Binding="{Binding CurrentVolume, StringFormat=F2}" Width="100"/>
+                            <DataGridTextColumn Header="Max Volume" Binding="{Binding MaxVolume, StringFormat=F2}" Width="100"/>
+                            <DataGridTextColumn Header="Items" Binding="{Binding ProductCount}" Width="60"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </materialDesign:Card>
+
+            <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" VerticalAlignment="Stretch"/>
+
+            <!-- Bin Details / Create -->
+            <materialDesign:Card Grid.Column="2" Margin="8,0,0,0">
+                <ScrollViewer>
+                    <StackPanel Margin="16">
+                        <TextBlock Style="{StaticResource MaterialDesignSubtitle1TextBlock}" 
+                                   Text="Bin Details" Margin="0,0,0,16"/>
+
+                        <!-- Create New Bin -->
+                        <GroupBox Header="Create New Bin" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBox materialDesign:HintAssist.Hint="Position"
+                                         Text="{Binding NewBinPosition}"
+                                         Margin="0,0,0,8"/>
+                                
+                                <TextBox materialDesign:HintAssist.Hint="Max Weight (kg)"
+                                         Text="{Binding NewBinMaxWeight}"
+                                         Margin="0,0,0,8"/>
+                                
+                                <TextBox materialDesign:HintAssist.Hint="Max Volume (m³)"
+                                         Text="{Binding NewBinMaxVolume}"
+                                         Margin="0,0,0,8"/>
+                                
+                                <ComboBox materialDesign:HintAssist.Hint="Bin Type"
+                                          SelectedItem="{Binding NewBinType}"
+                                          Margin="0,0,0,16">
+                                    <ComboBox.Items>
+                                        <x:Static Member="local:BinType.Standard"/>
+                                        <x:Static Member="local:BinType.Refrigerated"/>
+                                        <x:Static Member="local:BinType.Hazardous"/>
+                                        <x:Static Member="local:BinType.HighValue"/>
+                                        <x:Static Member="local:BinType.Oversized"/>
+                                    </ComboBox.Items>
+                                </ComboBox>
+                                
+                                <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                        Content="Create Bin"
+                                        Command="{Binding CreateBinCommand}"
+                                        IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Selected Bin Details -->
+                        <GroupBox Header="Selected Bin" Visibility="{Binding SelectedBin, Converter={StaticResource NullToVisibilityConverter}}">
+                            <StackPanel DataContext="{Binding SelectedBin}">
+                                <TextBlock Text="{Binding Position, StringFormat='Position: {0}'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding RackCode, StringFormat='Rack: {0}'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding Status, StringFormat='Status: {0}'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding BinType, StringFormat='Type: {0}'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding CurrentWeight, StringFormat='Current Weight: {0:F2} kg'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding MaxWeight, StringFormat='Max Weight: {0:F2} kg'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding CurrentVolume, StringFormat='Current Volume: {0:F2} m³'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding MaxVolume, StringFormat='Max Volume: {0:F2} m³'}" Margin="0,0,0,4"/>
+                                <TextBlock Text="{Binding ProductCount, StringFormat='Items: {0}'}" Margin="0,0,0,16"/>
+                                
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                            Content="Update"
+                                            Command="{Binding DataContext.UpdateBinCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            Margin="0,0,8,0"/>
+                                    <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                            Content="Delete"
+                                            Command="{Binding DataContext.DeleteBinCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Bulk Operations -->
+                        <GroupBox Header="Bulk Operations" Margin="0,16,0,0">
+                            <StackPanel>
+                                <Button Style="{StaticResource MaterialDesignRaisedButton}"
+                                        Content="Bulk Create Bins"
+                                        Command="{Binding BulkCreateBinsCommand}"
+                                        Margin="0,0,0,8"/>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </materialDesign:Card>
+        </Grid>
+
+        <!-- Status Bar -->
+        <materialDesign:Card Grid.Row="3" Margin="0,16,0,0" Padding="16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                
+                <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" VerticalAlignment="Center"/>
+                
+                <ProgressBar Grid.Column="1" 
+                             Width="100" 
+                             Height="6"
+                             IsIndeterminate="{Binding IsLoading}"
+                             Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </Grid>
+        </materialDesign:Card>
+    </Grid>
+</UserControl>

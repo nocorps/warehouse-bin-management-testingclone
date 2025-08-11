@@ -1,0 +1,294 @@
+<UserControl x:Class="WarehouseManagement.Desktop.Views.DashboardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:lvc="clr-namespace:LiveCharts.Wpf;assembly=LiveCharts.Wpf"
+             Background="{DynamicResource MaterialDesignPaper}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Page Title -->
+            <TextBlock Grid.Row="0" Style="{StaticResource PageTitle}" Text="Warehouse Dashboard"/>
+
+            <!-- KPI Cards -->
+            <Grid Grid.Row="1" Margin="0,0,0,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Total Bins -->
+                <materialDesign:Card Grid.Column="0" Style="{StaticResource StatusCard}">
+                    <StackPanel>
+                        <materialDesign:PackIcon Kind="CubeOutline" Width="32" Height="32" 
+                                               Foreground="{DynamicResource PrimaryHueMidBrush}" 
+                                               HorizontalAlignment="Center"/>
+                        <TextBlock Text="50,000" Style="{StaticResource MetricValue}" Margin="0,8,0,4"/>
+                        <TextBlock Text="Total Bins" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock Text="+125 from last week" FontSize="10" 
+                                 Foreground="{StaticResource SuccessColor}" 
+                                 HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Occupied Bins -->
+                <materialDesign:Card Grid.Column="1" Style="{StaticResource StatusCard}">
+                    <StackPanel>
+                        <materialDesign:PackIcon Kind="Package" Width="32" Height="32" 
+                                               Foreground="{StaticResource WarningColor}" 
+                                               HorizontalAlignment="Center"/>
+                        <TextBlock Text="32,150" Style="{StaticResource MetricValue}" Margin="0,8,0,4"/>
+                        <TextBlock Text="Occupied Bins" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock Text="64.3% Utilization" FontSize="10" 
+                                 Foreground="{StaticResource InfoColor}" 
+                                 HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Available Bins -->
+                <materialDesign:Card Grid.Column="2" Style="{StaticResource StatusCard}">
+                    <StackPanel>
+                        <materialDesign:PackIcon Kind="PackageVariant" Width="32" Height="32" 
+                                               Foreground="{StaticResource SuccessColor}" 
+                                               HorizontalAlignment="Center"/>
+                        <TextBlock Text="17,850" Style="{StaticResource MetricValue}" Margin="0,8,0,4"/>
+                        <TextBlock Text="Available Bins" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock Text="35.7% Available" FontSize="10" 
+                                 Foreground="{StaticResource SuccessColor}" 
+                                 HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Active Operations -->
+                <materialDesign:Card Grid.Column="3" Style="{StaticResource StatusCard}">
+                    <StackPanel>
+                        <materialDesign:PackIcon Kind="ClockOutline" Width="32" Height="32" 
+                                               Foreground="{StaticResource InfoColor}" 
+                                               HorizontalAlignment="Center"/>
+                        <TextBlock Text="487" Style="{StaticResource MetricValue}" Margin="0,8,0,4"/>
+                        <TextBlock Text="Active Operations" Style="{StaticResource MetricLabel}"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,4,0,0">
+                            <TextBlock Text="285 Put Away" FontSize="9" Foreground="{StaticResource InfoColor}"/>
+                            <TextBlock Text=" • " FontSize="9" Foreground="{StaticResource InfoColor}"/>
+                            <TextBlock Text="202 Pick" FontSize="9" Foreground="{StaticResource InfoColor}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Performance Score -->
+                <materialDesign:Card Grid.Column="4" Style="{StaticResource StatusCard}">
+                    <StackPanel>
+                        <materialDesign:PackIcon Kind="Speedometer" Width="32" Height="32" 
+                                               Foreground="{StaticResource SuccessColor}" 
+                                               HorizontalAlignment="Center"/>
+                        <TextBlock Text="94.2%" Style="{StaticResource MetricValue}" Margin="0,8,0,4"/>
+                        <TextBlock Text="Performance Score" Style="{StaticResource MetricLabel}"/>
+                        <TextBlock Text="Excellent" FontSize="10" 
+                                 Foreground="{StaticResource SuccessColor}" 
+                                 HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </materialDesign:Card>
+            </Grid>
+
+            <!-- Charts and Analytics -->
+            <Grid Grid.Row="2" Margin="0,0,0,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Utilization Trend Chart -->
+                <materialDesign:Card Grid.Column="0" Style="{StaticResource StatusCard}" Margin="0,0,8,0">
+                    <StackPanel>
+                        <TextBlock Text="Warehouse Utilization Trend" Style="{StaticResource SectionTitle}"/>
+                        <lvc:CartesianChart Height="200" Margin="0,8,0,0">
+                            <lvc:CartesianChart.AxisX>
+                                <lvc:Axis Title="Time" FontSize="12"/>
+                            </lvc:CartesianChart.AxisX>
+                            <lvc:CartesianChart.AxisY>
+                                <lvc:Axis Title="Utilization %" FontSize="12" MaxValue="100" MinValue="0"/>
+                            </lvc:CartesianChart.AxisY>
+                        </lvc:CartesianChart>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Zone Utilization -->
+                <materialDesign:Card Grid.Column="1" Style="{StaticResource StatusCard}" Margin="8,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Zone Utilization" Style="{StaticResource SectionTitle}"/>
+                        <StackPanel Margin="0,16,0,0">
+                            <!-- Zone A -->
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Zone A" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="85" Maximum="100" Height="8" Margin="8,0"/>
+                                <TextBlock Grid.Column="2" Text="85%" FontSize="12" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Zone B -->
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Zone B" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="72" Maximum="100" Height="8" Margin="8,0"/>
+                                <TextBlock Grid.Column="2" Text="72%" FontSize="12" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Zone C -->
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Zone C" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="56" Maximum="100" Height="8" Margin="8,0"/>
+                                <TextBlock Grid.Column="2" Text="56%" FontSize="12" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!-- Zone D -->
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Zone D" FontWeight="Medium" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="41" Maximum="100" Height="8" Margin="8,0"/>
+                                <TextBlock Grid.Column="2" Text="41%" FontSize="12" VerticalAlignment="Center"/>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </materialDesign:Card>
+            </Grid>
+
+            <!-- Recent Activities and Top Products -->
+            <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Recent Activities -->
+                <materialDesign:Card Grid.Column="0" Style="{StaticResource StatusCard}" Margin="0,0,8,0">
+                    <StackPanel>
+                        <Grid>
+                            <TextBlock Text="Recent Activities" Style="{StaticResource SectionTitle}"/>
+                            <Button Style="{StaticResource MaterialDesignFlatButton}" 
+                                   HorizontalAlignment="Right" VerticalAlignment="Top"
+                                   Content="View All" Padding="8,4"/>
+                        </Grid>
+
+                        <!-- High-Performance Activities List -->
+                        <ListBox Style="{StaticResource VirtualizedListBox}" 
+                               Height="300" Margin="0,8,0,0" BorderThickness="0">
+                            <ListBoxItem>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <materialDesign:PackIcon Grid.Column="0" Kind="ArrowDown" Width="16" Height="16" 
+                                                           Foreground="{StaticResource SuccessColor}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" Margin="8,0">
+                                        <TextBlock Text="Put Away: SKU12345 → Bin A-01-1-05" FontWeight="Medium"/>
+                                        <TextBlock Text="User: John Doe" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="2 min ago" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                                </Grid>
+                            </ListBoxItem>
+
+                            <ListBoxItem>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <materialDesign:PackIcon Grid.Column="0" Kind="ArrowUp" Width="16" Height="16" 
+                                                           Foreground="{StaticResource InfoColor}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" Margin="8,0">
+                                        <TextBlock Text="Pick: 25 units from Bin B-03-2-12" FontWeight="Medium"/>
+                                        <TextBlock Text="Order: ORD-2025-001" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="5 min ago" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                                </Grid>
+                            </ListBoxItem>
+
+                            <ListBoxItem>
+                                <Grid Margin="0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <materialDesign:PackIcon Grid.Column="0" Kind="SwapHorizontal" Width="16" Height="16" 
+                                                           Foreground="{StaticResource WarningColor}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" Margin="8,0">
+                                        <TextBlock Text="Bin Move: A-02-1-08 → A-02-1-15" FontWeight="Medium"/>
+                                        <TextBlock Text="SKU: SKU67890 (50 units)" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="8 min ago" FontSize="12" Opacity="0.7" VerticalAlignment="Center"/>
+                                </Grid>
+                            </ListBoxItem>
+                        </ListBox>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <!-- Top Products -->
+                <materialDesign:Card Grid.Column="1" Style="{StaticResource StatusCard}" Margin="8,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Top Products by Volume" Style="{StaticResource SectionTitle}"/>
+
+                        <!-- High-Performance Product List -->
+                        <DataGrid Style="{StaticResource HighPerformanceDataGrid}" 
+                                Height="300" Margin="0,8,0,0">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="100"/>
+                                <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="80"/>
+                                <DataGridTextColumn Header="Bins" Binding="{Binding BinCount}" Width="60"/>
+                                <DataGridTemplateColumn Header="Trend" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <materialDesign:PackIcon Kind="TrendingUp" Width="16" Height="16" 
+                                                                   Foreground="{StaticResource SuccessColor}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Performance Tip -->
+                        <Border Background="{DynamicResource MaterialDesignSelection}" 
+                               Padding="8" CornerRadius="4" Margin="0,16,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="Lightbulb" Width="16" Height="16" 
+                                                       Foreground="{StaticResource InfoColor}" VerticalAlignment="Top"/>
+                                <TextBlock Text="Tip: The system is optimized to handle 50,000+ bins with real-time updates and virtualized rendering for maximum performance." 
+                                         FontSize="12" Margin="8,0,0,0" TextWrapping="Wrap" Opacity="0.8"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </materialDesign:Card>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
