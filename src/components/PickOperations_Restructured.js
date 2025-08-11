@@ -27,7 +27,8 @@ import {
   List,
   ListItemText,
   ListItemIcon,
-  ListItemButton
+  ListItemButton,
+  TextField
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -69,26 +70,44 @@ export default function PickOperations() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
   const [isRollbackInProgress, setIsRollbackInProgress] = useState(false);
+  const [hasExecuted, setHasExecuted] = useState(false);
+  const [historyDateFilter, setHistoryDateFilter] = useState('');
 
   // Load history from Firestore when warehouse changes
   useEffect(() => {
     if (currentWarehouse?.id) {
-      const loadHistory = async () => {
-        try {
-          const history = await historyService.getOperationHistory(
-            currentWarehouse.id, 
-            historyService.operationTypes.PICK
-          );
-          setExecutionHistory(history);
-          console.log('📋 Pick history loaded:', history.length, 'items');
-        } catch (error) {
-          console.error('Error loading pick history:', error);
-        }
-      };
-      
       loadHistory();
     }
-  }, [currentWarehouse?.id]);
+  }, [currentWarehouse?.id, historyDateFilter]);
+
+  const loadHistory = async () => {
+    try {
+      const filters = {};
+      
+      // Add date filtering if date is selected
+      if (historyDateFilter) {
+        const selectedDate = new Date(historyDateFilter);
+        const startOfDay = new Date(selectedDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const endOfDay = new Date(selectedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        
+        filters.startDate = startOfDay.toISOString();
+        filters.endDate = endOfDay.toISOString();
+      }
+      
+      const history = await historyService.getOperationHistory(
+        currentWarehouse.id, 
+        historyService.operationTypes.PICK,
+        filters
+      );
+      setExecutionHistory(history);
+      console.log('📋 Pick history loaded:', history.length, 'items', historyDateFilter ? `for date ${historyDateFilter}` : '');
+    } catch (error) {
+      console.error('Error loading pick history:', error);
+    }
+  };
 
   const openHistoryDetailDialog = (historyItem) => {
     setSelectedHistoryItem(historyItem);
@@ -110,6 +129,7 @@ export default function PickOperations() {
       setUploadedFile(file);
       setParsedData(data);
       setExecutionResults(null);
+      setHasExecuted(false); // Reset execution state
       
       if (data.errors.length > 0) {
         showError(`File parsed with ${data.errors.length} errors. Please review before proceeding.`);
@@ -345,6 +365,15 @@ export default function PickOperations() {
         
         setExecutionResults(executionResult);
         addToHistory(executionResult);
+        
+        // Set execution flag for failed operations too
+        setHasExecuted(true);
+        
+        // Auto-clear screen after 5 seconds for failed operations
+        setTimeout(() => {
+          handleClearScreen();
+        }, 5000);
+        
         return;
       }
       
@@ -568,8 +597,25 @@ export default function PickOperations() {
       const partialCount = results.filter(r => r.status === 'Partial').length;
       showSuccess(`Pick completed! ${successCount} full picks, ${partialCount} partial picks.`);
 
+      // Set execution flag to block button if any picks were successful
+      if (successCount > 0 || partialCount > 0) {
+        setHasExecuted(true);
+        
+        // Auto-clear screen after 5 seconds
+        setTimeout(() => {
+          handleClearScreen();
+        }, 5000);
+      }
+
     } catch (error) {
       showError(`Execution failed: ${error.message}`);
+      // Set execution flag even for errors to prevent retry
+      setHasExecuted(true);
+      
+      // Auto-clear screen after 5 seconds for errors
+      setTimeout(() => {
+        handleClearScreen();
+      }, 5000);
     } finally {
       setExecuting(false);
       setProgress(0);
@@ -804,8 +850,20 @@ export default function PickOperations() {
   };
   
   const handleClearScreen = () => {
+    // Reset file upload input
+    const fileInput = document.getElementById('excel-upload-pick');
+    if (fileInput) {
+      fileInput.value = '';
+    }
+    
+    // Clear all state
+    setUploadedFile(null);
+    setParsedData(null);
     setExecutionResults(null);
     setSelectedHistoryItem(null);
+    setHasExecuted(false);
+    
+    showSuccess('Screen cleared. You can now upload a new file.');
   };
 
   const handleRollbackOperation = async (historyItem, operationIndex) => {
@@ -962,17 +1020,32 @@ export default function PickOperations() {
               <Typography variant="h6">
                 Pick Operation History
               </Typography>
-              <Box>
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                <TextField
+                  type="date"
+                  label="Filter by Date"
+                  value={historyDateFilter}
+                  onChange={(e) => setHistoryDateFilter(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={{ minWidth: 160 }}
+                  helperText={historyDateFilter ? "Showing selected date" : "All dates"}
+                />
+                {historyDateFilter && (
+                  <Button 
+                    size="small" 
+                    onClick={() => setHistoryDateFilter('')}
+                    color="primary"
+                  >
+                    Show All
+                  </Button>
+                )}
                 <Button 
                   size="small" 
                   startIcon={<RefreshIcon />}
                   onClick={async () => {
                     try {
-                      const history = await historyService.getOperationHistory(
-                        currentWarehouse.id, 
-                        historyService.operationTypes.PICK
-                      );
-                      setExecutionHistory(history);
+                      await loadHistory();
                       showSuccess('History refreshed successfully');
                     } catch (error) {
                       console.error('Error refreshing history:', error);
@@ -997,7 +1070,12 @@ export default function PickOperations() {
             </Box>
             
             {executionHistory.length === 0 ? (
-              <Alert severity="info">No history found. Complete a pick operation to see it here.</Alert>
+              <Alert severity="info">
+                {historyDateFilter 
+                  ? `No pick operations found for ${new Date(historyDateFilter).toLocaleDateString()}. Try selecting a different date or click "Show All" to see all history.`
+                  : 'No history found. Complete a pick operation to see it here.'
+                }
+              </Alert>
             ) : (
               <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
                 <Table stickyHeader size="small">
@@ -1092,9 +1170,9 @@ export default function PickOperations() {
               accept=".xlsx,.xls"
               onChange={handleFileUpload}
               style={{ display: 'none' }}
-              id="excel-upload"
+              id="excel-upload-pick"
             />
-            <label htmlFor="excel-upload">
+            <label htmlFor="excel-upload-pick">
               <Button
                 component="span"
                 variant="contained"
@@ -1152,10 +1230,10 @@ export default function PickOperations() {
               variant="contained"
               startIcon={<ExecuteIcon />}
               onClick={handleExecutePick}
-              disabled={executing || !parsedData || parsedData.items.length === 0}
+              disabled={executing || !parsedData || parsedData.items.length === 0 || hasExecuted}
               sx={{ mb: 2 }}
             >
-              {executing ? 'Executing...' : 'Execute Pick'}
+              {executing ? 'Executing...' : hasExecuted ? 'Executed - Screen will clear in 5s' : 'Execute Pick'}
             </Button>
 
             {executing && (

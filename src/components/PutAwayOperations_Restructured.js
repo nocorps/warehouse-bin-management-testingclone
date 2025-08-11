@@ -27,7 +27,8 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemIcon
+  ListItemIcon,
+  TextField
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -80,6 +81,8 @@ export default function PutAwayOperations() {
   const [executionHistory, setExecutionHistory] = useState([]);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [hasExecuted, setHasExecuted] = useState(false);
+  const [historyDateFilter, setHistoryDateFilter] = useState('');
 
   // History Detail Dialog
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
@@ -194,6 +197,7 @@ export default function PutAwayOperations() {
       setUploadedFile(file);
       setParsedData(data);
       setExecutionResults(null);
+      setHasExecuted(false); // Reset execution state
       
       if (data.errors.length > 0) {
         showError(`File parsed with ${data.errors.length} errors. Please review before proceeding.`);
@@ -208,6 +212,23 @@ export default function PutAwayOperations() {
   };
 
   // No automatic bin creation - removed emergency bin creation helper function
+
+  const handleClearScreen = () => {
+    // Reset file upload input
+    const fileInput = document.getElementById('excel-upload');
+    if (fileInput) {
+      fileInput.value = '';
+    }
+    
+    // Clear all state
+    setUploadedFile(null);
+    setParsedData(null);
+    setExecutionResults(null);
+    setHasExecuted(false);
+    setSelectedHistoryItem(null);
+    
+    showInfo('Screen cleared. You can now upload a new file.');
+  };
 
   const handleExecutePutaway = async () => {
     if (!parsedData || parsedData.items.length === 0) {
@@ -412,6 +433,14 @@ export default function PutAwayOperations() {
       const emergencyMessage = emergencyCount > 0 ? ` ${emergencyCount} emergency allocations created.` : '';
       
       showSuccess(`Put-away completed! ${successCount}/${results.length} items processed successfully.${autoCreatedMessage}${emergencyMessage}`);
+      
+      // Set execution flag to block button
+      setHasExecuted(true);
+      
+      // Auto-clear screen after 5 seconds
+      setTimeout(() => {
+        handleClearScreen();
+      }, 5000);
 
     } catch (error) {
       showError(`Execution failed: ${error.message}`);
@@ -572,22 +601,38 @@ export default function PutAwayOperations() {
   // Load history from Firestore when warehouse changes
   useEffect(() => {
     if (currentWarehouse?.id) {
-      const loadHistory = async () => {
-        try {
-          const history = await historyService.getOperationHistory(
-            currentWarehouse.id, 
-            historyService.operationTypes.PUTAWAY
-          );
-          setExecutionHistory(history);
-          console.log('📦 PutAway history loaded:', history.length, 'items');
-        } catch (error) {
-          console.error('Error loading putaway history:', error);
-        }
-      };
-      
       loadHistory();
     }
-  }, [currentWarehouse?.id]);
+  }, [currentWarehouse?.id, historyDateFilter]);
+
+  const loadHistory = async () => {
+    try {
+      const filters = {};
+      
+      // Add date filtering if date is selected
+      if (historyDateFilter) {
+        const selectedDate = new Date(historyDateFilter);
+        const startOfDay = new Date(selectedDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const endOfDay = new Date(selectedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        
+        filters.startDate = startOfDay.toISOString();
+        filters.endDate = endOfDay.toISOString();
+      }
+      
+      const history = await historyService.getOperationHistory(
+        currentWarehouse.id, 
+        historyService.operationTypes.PUTAWAY,
+        filters
+      );
+      setExecutionHistory(history);
+      console.log('📦 PutAway history loaded:', history.length, 'items', historyDateFilter ? `for date ${historyDateFilter}` : '');
+    } catch (error) {
+      console.error('Error loading putaway history:', error);
+    }
+  };
 
   // Function to add a new history item
   const addToHistory = async (results) => {
@@ -628,15 +673,6 @@ export default function PutAwayOperations() {
       
       return historyItem;
     }
-  };
-
-  // Function to clear screen after execution
-  const handleClearScreen = () => {
-    setUploadedFile(null);
-    setParsedData(null);
-    setExecutionResults(null);
-    setProgress(0);
-    showSuccess('Screen cleared. You can start a new put-away operation.');
   };
 
   // Function to view history item details
@@ -838,20 +874,46 @@ export default function PutAwayOperations() {
               <Typography variant="h6">
                 Put-Away History
               </Typography>
-              {executionHistory.length > 0 && (
-                <Button 
-                  size="small" 
-                  startIcon={<DeleteIcon />} 
-                  color="error"
-                  onClick={handleClearAllHistory}
-                >
-                  Clear All
-                </Button>
-              )}
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                <TextField
+                  type="date"
+                  label="Filter by Date"
+                  value={historyDateFilter}
+                  onChange={(e) => setHistoryDateFilter(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  size="small"
+                  sx={{ minWidth: 160 }}
+                  helperText={historyDateFilter ? "Showing selected date" : "All dates"}
+                />
+                {historyDateFilter && (
+                  <Button 
+                    size="small" 
+                    onClick={() => setHistoryDateFilter('')}
+                    color="primary"
+                  >
+                    Show All
+                  </Button>
+                )}
+                {executionHistory.length > 0 && (
+                  <Button 
+                    size="small" 
+                    startIcon={<DeleteIcon />} 
+                    color="error"
+                    onClick={handleClearAllHistory}
+                  >
+                    Clear All
+                  </Button>
+                )}
+              </Box>
             </Box>
             
             {executionHistory.length === 0 ? (
-              <Alert severity="info">No history found. Complete a put-away operation to see it here.</Alert>
+              <Alert severity="info">
+                {historyDateFilter 
+                  ? `No put-away operations found for ${new Date(historyDateFilter).toLocaleDateString()}. Try selecting a different date or click "Show All" to see all history.`
+                  : 'No history found. Complete a put-away operation to see it here.'
+                }
+              </Alert>
             ) : (
               <TableContainer component={Paper} sx={{ maxHeight: 300 }}>
                 <Table stickyHeader size="small">
@@ -996,10 +1058,10 @@ export default function PutAwayOperations() {
               variant="contained"
               startIcon={<ExecuteIcon />}
               onClick={handleExecutePutaway}
-              disabled={executing || !parsedData || parsedData.items.length === 0}
+              disabled={executing || !parsedData || parsedData.items.length === 0 || hasExecuted}
               sx={{ mb: 2 }}
             >
-              {executing ? 'Executing...' : 'Execute Put-Away'}
+              {executing ? 'Executing...' : hasExecuted ? 'Executed - Screen will clear in 5s' : 'Execute Put-Away'}
             </Button>
 
             {executing && (

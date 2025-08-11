@@ -734,7 +734,11 @@ export class PrintService {
 
         ${includeDetails && movements.length > 0 ? `
         <div class="movement-details">
-          <h2>Movement Details (${movements.length > 100 ? 'First 100 of ' + movements.length : movements.length} movements)</h2>
+          <h2>Movement Details (${
+            reportData.config.scope === 'full' || movements.length <= 100 
+              ? `${movements.length} movements` 
+              : `First 100 of ${movements.length} movements`
+          })</h2>
           <table class="items-table">
             <thead>
               <tr>
@@ -745,7 +749,7 @@ export class PrintService {
               </tr>
             </thead>
             <tbody>
-              ${movements.slice(0, 100).map(movement => `
+              ${(reportData.config.scope === 'full' ? movements : movements.slice(0, 100)).map(movement => `
                 <tr>
                   <td><strong>${movement.sku}</strong></td>
                   <td>${movement.location}</td>
@@ -757,7 +761,7 @@ export class PrintService {
               `).join('')}
             </tbody>
           </table>
-          ${movements.length > 100 ? 
+          ${movements.length > 100 && reportData.config.scope !== 'full' ? 
             `<p class="note">Note: Only the first 100 movements are shown. Download the full report for complete data.</p>` : 
             ''
           }
