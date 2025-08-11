@@ -306,16 +306,73 @@ export const warehouseOperations = {
         zoneId: bin.zoneId || 'main'
       };
 
-      // Update bin with product and tracking info
-      const updatedBin = await warehouseService.updateBin(warehouseId, actualBinId, {
-        sku: task.sku,
+      // Update bin with mixed barcode strategy
+      let binUpdateData = {
         currentQty: totalAfter,
-        lotNumber: task.lotNumber,
-        expiryDate: task.expiryDate,
         status: 'occupied',
         lastPutAwayAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      });
+      };
+
+      // Handle mixed barcode storage strategy
+      if (allocationType === 'NEW_PLACEMENT') {
+        // New placement - set the bin to this SKU
+        binUpdateData.sku = task.sku;
+        binUpdateData.lotNumber = task.lotNumber;
+        binUpdateData.expiryDate = task.expiryDate;
+      } else if (allocationType === 'SAME_SKU_CONSOLIDATION') {
+        // Same SKU - update lot and expiry if newer
+        binUpdateData.sku = task.sku;
+        if (task.lotNumber) binUpdateData.lotNumber = task.lotNumber;
+        if (task.expiryDate) binUpdateData.expiryDate = task.expiryDate;
+      } else if (allocationType === 'MIXED_SKU_STORAGE') {
+        // Mixed storage - keep original SKU but track mixed contents
+        // Note: We keep the original bin SKU as primary, new SKU becomes secondary
+        if (!bin.mixedContents) {
+          // Initialize mixed contents tracking
+          binUpdateData.mixedContents = [
+            {
+              sku: bin.sku,
+              quantity: currentQty,
+              lotNumber: bin.lotNumber,
+              expiryDate: bin.expiryDate
+            },
+            {
+              sku: task.sku,
+              quantity: newQuantity,
+              lotNumber: task.lotNumber,
+              expiryDate: task.expiryDate
+            }
+          ];
+        } else {
+          // Add to existing mixed contents
+          const existingContent = bin.mixedContents.find(content => 
+            content.sku === task.sku && 
+            content.lotNumber === task.lotNumber &&
+            content.expiryDate === task.expiryDate
+          );
+          
+          if (existingContent) {
+            // Update existing content quantity
+            existingContent.quantity += newQuantity;
+          } else {
+            // Add new content
+            bin.mixedContents.push({
+              sku: task.sku,
+              quantity: newQuantity,
+              lotNumber: task.lotNumber,
+              expiryDate: task.expiryDate
+            });
+          }
+          
+          binUpdateData.mixedContents = bin.mixedContents;
+        }
+        
+        // Keep the bin's primary SKU and lot info unchanged for mixed storage
+        // This ensures the bin still shows its primary product
+      }
+
+      const updatedBin = await warehouseService.updateBin(warehouseId, actualBinId, binUpdateData);
 
       // Update task status with comprehensive completion info
       const completionData = {
@@ -359,87 +416,126 @@ export const warehouseOperations = {
   },
 
   /**
-   * Find products for picking with enhanced FIFO logic
+   * Find products for picking with enhanced FIFO logic and mixed barcode support
    */
   async findProductsForPicking(warehouseId, sku, requiredQuantity) {
     try {
       console.log(`Finding products for picking: SKU=${sku}, Required=${requiredQuantity}`);
       
-      // Get all bins containing the SKU
+      // Get all bins and find ones containing the SKU (including mixed bins)
       const bins = await this.getAllBins(warehouseId);
-      const productBins = bins
-        .filter(bin => bin.sku === sku && bin.currentQty > 0 && bin.status === 'occupied')
-        .map(bin => ({
-          ...bin,
-          currentQty: parseInt(bin.currentQty) || 0,
-          // Parse date properly for FIFO sorting
-          parsedExpiryDate: bin.expiryDate ? new Date(bin.expiryDate) : null,
-          // Parse creation date for secondary FIFO sorting
-          parsedCreatedAt: bin.createdAt ? new Date(bin.createdAt) : new Date(),
-          // Parse lot date if available for tertiary FIFO sorting
-          parsedLotDate: bin.lotNumber && bin.lotDate ? new Date(bin.lotDate) : null
-        }))
-        .sort((a, b) => {
-          // FIFO Logic: First In, First Out
-          console.log(`Comparing bins: ${a.code} vs ${b.code}`);
-          
-          // 1. PRIMARY SORT: Expiry date (earliest expiry first)
-          if (a.parsedExpiryDate && b.parsedExpiryDate) {
-            const expiryDiff = a.parsedExpiryDate.getTime() - b.parsedExpiryDate.getTime();
-            if (expiryDiff !== 0) {
-              console.log(`  → Sorted by expiry: ${a.expiryDate} vs ${b.expiryDate}`);
-              return expiryDiff;
-            }
-          }
-          
-          // 2. If one has expiry and other doesn't, prioritize the one with expiry (it's older stock)
-          if (a.parsedExpiryDate && !b.parsedExpiryDate) return -1;
-          if (!a.parsedExpiryDate && b.parsedExpiryDate) return 1;
-          
-          // 3. SECONDARY SORT: Lot date (if available) - earlier lot dates first
-          if (a.parsedLotDate && b.parsedLotDate) {
-            const lotDiff = a.parsedLotDate.getTime() - b.parsedLotDate.getTime();
-            if (lotDiff !== 0) {
-              console.log(`  → Sorted by lot date: ${a.lotDate} vs ${b.lotDate}`);
-              return lotDiff;
-            }
-          }
-          
-          // 4. TERTIARY SORT: Creation time (earlier created first - true FIFO)
-          const createdDiff = a.parsedCreatedAt.getTime() - b.parsedCreatedAt.getTime();
-          if (createdDiff !== 0) {
-            console.log(`  → Sorted by creation time: ${a.createdAt} vs ${b.createdAt}`);
-            return createdDiff;
-          }
-          
-          // 5. QUATERNARY SORT: Grid level (first grid first for easier access)
-          // Note: In new hierarchical format, shelfLevel represents grid number (1, 2, 3...)
-          const shelfDiff = (a.shelfLevel || 1) - (b.shelfLevel || 1);
-          if (shelfDiff !== 0) {
-            console.log(`  → Sorted by grid level: ${a.shelfLevel} vs ${b.shelfLevel}`);
-            return shelfDiff;
-          }
-          
-          // 6. QUINARY SORT: Level within grid (A, B, C, D, E, F, G, H)
-          const aLevel = a.level || 'A';
-          const bLevel = b.level || 'A';
-          const levelDiff = aLevel.localeCompare(bLevel);
-          if (levelDiff !== 0) {
-            console.log(`  → Sorted by level: ${aLevel} vs ${bLevel}`);
-            return levelDiff;
-          }
-          
-          // 7. FINAL SORT: Bin code for consistent ordering
-          return (a.code || '').localeCompare(b.code || '');
-        });
+      const productBins = [];
 
-      console.log('FIFO sorted bins:', productBins.map(bin => ({
+      for (const bin of bins) {
+        if (bin.status !== 'occupied') continue;
+
+        let availableQuantity = 0;
+        let binSKUInfo = null;
+
+        // Check if this bin contains the SKU we're looking for
+        if (bin.sku === sku && bin.currentQty > 0) {
+          // Primary SKU in bin
+          availableQuantity = parseInt(bin.currentQty) || 0;
+          binSKUInfo = {
+            sku: bin.sku,
+            lotNumber: bin.lotNumber,
+            expiryDate: bin.expiryDate,
+            isMixed: false
+          };
+        } else if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
+          // Check mixed contents for our SKU
+          const matchingContent = bin.mixedContents.find(content => content.sku === sku);
+          if (matchingContent && matchingContent.quantity > 0) {
+            availableQuantity = parseInt(matchingContent.quantity) || 0;
+            binSKUInfo = {
+              sku: matchingContent.sku,
+              lotNumber: matchingContent.lotNumber,
+              expiryDate: matchingContent.expiryDate,
+              isMixed: true,
+              originalBinSKU: bin.sku
+            };
+          }
+        }
+
+        if (availableQuantity > 0 && binSKUInfo) {
+          productBins.push({
+            ...bin,
+            availableQuantity,
+            skuInfo: binSKUInfo,
+            // Parse date properly for FIFO sorting
+            parsedExpiryDate: binSKUInfo.expiryDate ? new Date(binSKUInfo.expiryDate) : null,
+            // Parse creation date for secondary FIFO sorting
+            parsedCreatedAt: bin.createdAt ? new Date(bin.createdAt) : new Date(),
+            // Parse lot date if available for tertiary FIFO sorting
+            parsedLotDate: binSKUInfo.lotNumber && bin.lotDate ? new Date(bin.lotDate) : null
+          });
+        }
+      }
+
+      // Sort by FIFO logic
+      productBins.sort((a, b) => {
+        // FIFO Logic: First In, First Out
+        console.log(`Comparing bins: ${a.code} vs ${b.code}`);
+        
+        // 1. PRIMARY SORT: Expiry date (earliest expiry first)
+        if (a.parsedExpiryDate && b.parsedExpiryDate) {
+          const expiryDiff = a.parsedExpiryDate.getTime() - b.parsedExpiryDate.getTime();
+          if (expiryDiff !== 0) {
+            console.log(`  → Sorted by expiry: ${a.skuInfo.expiryDate} vs ${b.skuInfo.expiryDate}`);
+            return expiryDiff;
+          }
+        }
+        
+        // 2. If one has expiry and other doesn't, prioritize the one with expiry (it's older stock)
+        if (a.parsedExpiryDate && !b.parsedExpiryDate) return -1;
+        if (!a.parsedExpiryDate && b.parsedExpiryDate) return 1;
+        
+        // 3. SECONDARY SORT: Lot date (if available) - earlier lot dates first
+        if (a.parsedLotDate && b.parsedLotDate) {
+          const lotDiff = a.parsedLotDate.getTime() - b.parsedLotDate.getTime();
+          if (lotDiff !== 0) {
+            console.log(`  → Sorted by lot date: ${a.lotDate} vs ${b.lotDate}`);
+            return lotDiff;
+          }
+        }
+        
+        // 4. TERTIARY SORT: Creation time (earlier created first - true FIFO)
+        const createdDiff = a.parsedCreatedAt.getTime() - b.parsedCreatedAt.getTime();
+        if (createdDiff !== 0) {
+          console.log(`  → Sorted by creation time: ${a.createdAt} vs ${b.createdAt}`);
+          return createdDiff;
+        }
+        
+        // 5. QUATERNARY SORT: Grid level (first grid first for easier access)
+        const shelfDiff = (a.shelfLevel || 1) - (b.shelfLevel || 1);
+        if (shelfDiff !== 0) {
+          console.log(`  → Sorted by grid level: ${a.shelfLevel} vs ${b.shelfLevel}`);
+          return shelfDiff;
+        }
+        
+        // 6. QUINARY SORT: Level within grid (A, B, C, D, E, F, G, H)
+        const aLevel = a.level || 'A';
+        const bLevel = b.level || 'A';
+        const levelDiff = aLevel.localeCompare(bLevel);
+        if (levelDiff !== 0) {
+          console.log(`  → Sorted by level: ${aLevel} vs ${bLevel}`);
+          return levelDiff;
+        }
+        
+        // 7. FINAL SORT: Bin code for consistent ordering
+        return (a.code || '').localeCompare(b.code || '');
+      });
+
+      console.log('FIFO sorted bins with mixed barcode support:', productBins.map(bin => ({
         code: bin.code,
-        currentQty: bin.currentQty,
-        expiryDate: bin.expiryDate,
+        availableQuantity: bin.availableQuantity,
+        sku: bin.skuInfo.sku,
+        isMixed: bin.skuInfo.isMixed,
+        originalBinSKU: bin.skuInfo.originalBinSKU,
+        expiryDate: bin.skuInfo.expiryDate,
         createdAt: bin.createdAt,
         shelfLevel: bin.shelfLevel,
-        lotNumber: bin.lotNumber
+        lotNumber: bin.skuInfo.lotNumber
       })));
 
       // Calculate pick plan with FIFO allocation
@@ -450,37 +546,40 @@ export const warehouseOperations = {
       for (const bin of productBins) {
         if (remainingQuantity <= 0) break;
 
-        const pickQuantity = Math.min(bin.currentQty, remainingQuantity);
+        const pickQuantity = Math.min(bin.availableQuantity, remainingQuantity);
         if (pickQuantity > 0) {
           pickPlan.push({
             ...bin,
             pickQuantity,
-            remainingInBin: bin.currentQty - pickQuantity,
-            fifoReason: this.getFIFOReason(bin),
-            pickOrder: pickPlan.length + 1
+            remainingInBin: bin.availableQuantity - pickQuantity,
+            fifoReason: this.getFIFOReason(bin.skuInfo),
+            pickOrder: pickPlan.length + 1,
+            isMixed: bin.skuInfo.isMixed,
+            originalBinSKU: bin.skuInfo.originalBinSKU
           });
           remainingQuantity -= pickQuantity;
           totalPicked += pickQuantity;
           
-          console.log(`✓ FIFO Pick Plan: Bin ${bin.code} - Pick ${pickQuantity}/${bin.currentQty}, Remaining needed: ${remainingQuantity}`);
+          console.log(`✓ FIFO Pick Plan: Bin ${bin.code} - Pick ${pickQuantity}/${bin.availableQuantity} (${bin.skuInfo.isMixed ? 'Mixed' : 'Pure'} bin), Remaining needed: ${remainingQuantity}`);
         }
       }
 
       const result = {
         pickPlan,
-        totalAvailable: productBins.reduce((sum, bin) => sum + bin.currentQty, 0),
+        totalAvailable: productBins.reduce((sum, bin) => sum + bin.availableQuantity, 0),
         totalPicked,
         shortfall: Math.max(0, remainingQuantity),
         isFullyAvailable: remainingQuantity === 0,
         fifoCompliant: true
       };
 
-      console.log('FIFO Pick Result:', {
+      console.log('FIFO Pick Result with Mixed Barcode Support:', {
         requiredQuantity,
         totalAvailable: result.totalAvailable,
         totalPicked,
         shortfall: result.shortfall,
-        binsUsed: pickPlan.length
+        binsUsed: pickPlan.length,
+        mixedBins: pickPlan.filter(p => p.isMixed).length
       });
 
       return result;
@@ -491,25 +590,33 @@ export const warehouseOperations = {
   },
 
   /**
-   * Get FIFO explanation for a bin
+   * Get FIFO explanation for a bin (supporting mixed barcode structure)
    */
-  getFIFOReason(bin) {
+  getFIFOReason(binOrSkuInfo) {
     const reasons = [];
     
-    if (bin.expiryDate) {
-      const expiryDate = new Date(bin.expiryDate);
+    // Handle both old bin structure and new skuInfo structure
+    const skuInfo = binOrSkuInfo.skuInfo || binOrSkuInfo;
+    const bin = binOrSkuInfo.bin || binOrSkuInfo;
+    
+    if (skuInfo.expiryDate) {
+      const expiryDate = new Date(skuInfo.expiryDate);
       const daysToExpiry = Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24));
       reasons.push(`Expires in ${daysToExpiry} days`);
     }
     
-    if (bin.createdAt) {
-      const createdDate = new Date(bin.createdAt);
+    if (bin.createdAt || skuInfo.createdAt) {
+      const createdDate = new Date(bin.createdAt || skuInfo.createdAt);
       const daysOld = Math.ceil((new Date() - createdDate) / (1000 * 60 * 60 * 24));
       reasons.push(`${daysOld} days old`);
     }
     
-    if (bin.lotNumber) {
-      reasons.push(`Lot: ${bin.lotNumber}`);
+    if (skuInfo.lotNumber) {
+      reasons.push(`Lot: ${skuInfo.lotNumber}`);
+    }
+    
+    if (skuInfo.isMixed) {
+      reasons.push(`Mixed bin (Primary: ${skuInfo.originalBinSKU})`);
     }
     
     reasons.push(`Grid ${bin.shelfLevel || 1}`);
@@ -638,75 +745,128 @@ export const warehouseOperations = {
           throw new Error(`Bin ${binId} not found`);
         }
 
-        // Validate pick operation
+        // Validate pick operation for mixed barcode support
         const currentQty = parseInt(bin.currentQty) || 0;
-        if (currentQty < quantity) {
-          throw new Error(`Insufficient quantity in bin ${bin.code}. Available: ${currentQty}, Requested: ${quantity}`);
-        }
+        let availableQuantityForSKU = 0;
+        let skuLocation = null;
 
-        // Validate SKU match
-        if (bin.sku !== sku) {
-          throw new Error(`SKU mismatch in bin ${bin.code}. Expected: ${sku}, Found: ${bin.sku}`);
-        }
-
-        // FIFO validation: Check if this is indeed the oldest stock
-        if (lotNumber && bin.lotNumber && bin.lotNumber !== lotNumber) {
-          console.warn(`⚠️ Lot number mismatch in bin ${bin.code}. Expected: ${lotNumber}, Found: ${bin.lotNumber}`);
-        }
-
-        if (expiryDate && bin.expiryDate) {
-          const expectedExpiry = new Date(expiryDate);
-          const binExpiry = new Date(bin.expiryDate);
-          if (Math.abs(expectedExpiry - binExpiry) > 24 * 60 * 60 * 1000) { // More than 1 day difference
-            console.warn(`⚠️ Expiry date mismatch in bin ${bin.code}. This might not be FIFO compliant.`);
+        // Check if this is a primary SKU bin or mixed bin
+        if (bin.sku === sku) {
+          // Primary SKU in bin
+          availableQuantityForSKU = currentQty;
+          skuLocation = 'primary';
+        } else if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
+          // Check mixed contents for our SKU
+          const matchingContent = bin.mixedContents.find(content => content.sku === sku);
+          if (matchingContent) {
+            availableQuantityForSKU = parseInt(matchingContent.quantity) || 0;
+            skuLocation = 'mixed';
           }
         }
 
-        // Calculate new bin state
-        const newQty = currentQty - quantity;
-        const isEmpty = newQty === 0;
+        if (availableQuantityForSKU === 0) {
+          throw new Error(`SKU ${sku} not found in bin ${bin.code}`);
+        }
 
-        // Prepare bin update
-        const binUpdate = {
-          currentQty: newQty,
-          status: isEmpty ? 'available' : 'occupied',
-          sku: isEmpty ? null : bin.sku,
-          lotNumber: isEmpty ? null : bin.lotNumber,
-          expiryDate: isEmpty ? null : bin.expiryDate,
+        if (availableQuantityForSKU < quantity) {
+          throw new Error(`Insufficient quantity of SKU ${sku} in bin ${bin.code}. Available: ${availableQuantityForSKU}, Requested: ${quantity}`);
+        }
+
+        // Calculate new bin state for mixed barcode support
+        const newQtyForSKU = availableQuantityForSKU - quantity;
+        let binUpdate = {
           lastPickedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
 
+        if (skuLocation === 'primary') {
+          // Picking from primary SKU
+          const newTotalQty = currentQty - quantity;
+          const isEmpty = newTotalQty === 0;
+
+          binUpdate.currentQty = newTotalQty;
+          binUpdate.status = isEmpty ? 'available' : 'occupied';
+          
+          if (isEmpty) {
+            // Bin becomes empty
+            binUpdate.sku = null;
+            binUpdate.lotNumber = null;
+            binUpdate.expiryDate = null;
+            binUpdate.mixedContents = null;
+          }
+        } else {
+          // Picking from mixed contents
+          const updatedMixedContents = bin.mixedContents.map(content => {
+            if (content.sku === sku) {
+              return { ...content, quantity: content.quantity - quantity };
+            }
+            return content;
+          }).filter(content => content.quantity > 0); // Remove entries with 0 quantity
+
+          const newTotalQty = updatedMixedContents.reduce((sum, content) => sum + content.quantity, 0);
+          
+          if (newTotalQty === 0) {
+            // Bin becomes completely empty
+            binUpdate.currentQty = 0;
+            binUpdate.status = 'available';
+            binUpdate.sku = null;
+            binUpdate.lotNumber = null;
+            binUpdate.expiryDate = null;
+            binUpdate.mixedContents = null;
+          } else if (updatedMixedContents.length === 1) {
+            // Only one SKU left, convert back to simple bin
+            const remainingContent = updatedMixedContents[0];
+            binUpdate.currentQty = remainingContent.quantity;
+            binUpdate.status = 'occupied';
+            binUpdate.sku = remainingContent.sku;
+            binUpdate.lotNumber = remainingContent.lotNumber;
+            binUpdate.expiryDate = remainingContent.expiryDate;
+            binUpdate.mixedContents = null;
+          } else {
+            // Still mixed, update the contents and total quantity
+            binUpdate.currentQty = newTotalQty;
+            binUpdate.status = 'occupied';
+            binUpdate.mixedContents = updatedMixedContents;
+          }
+        }
+
         // Update bin in database
         await warehouseService.updateBin(warehouseId, binId, binUpdate);
+
+        const newTotalQty = binUpdate.currentQty;
+        const isEmpty = newTotalQty === 0;
 
         binUpdates.push({
           binId,
           binCode: bin.code,
           previousQty: currentQty,
           pickedQty: quantity,
-          newQty,
+          newQty: newTotalQty,
           isEmpty,
-          sku: bin.sku,
-          lotNumber: bin.lotNumber,
-          expiryDate: bin.expiryDate
+          sku: sku,
+          lotNumber: lotNumber || bin.lotNumber,
+          expiryDate: expiryDate || bin.expiryDate,
+          skuLocation,
+          wasMixed: skuLocation === 'mixed'
         });
 
         auditLog.push({
           action: 'PICK',
           binId,
           binCode: bin.code,
-          sku: bin.sku,
+          sku: sku,
           quantity: quantity,
-          lotNumber: bin.lotNumber,
-          expiryDate: bin.expiryDate,
+          lotNumber: lotNumber || bin.lotNumber,
+          expiryDate: expiryDate || bin.expiryDate,
           previousQty: currentQty,
-          newQty,
+          newQty: newTotalQty,
           fifoCompliant: true,
+          skuLocation,
+          wasMixed: skuLocation === 'mixed',
           timestamp: new Date().toISOString()
         });
 
-        console.log(`✅ Picked ${quantity} units from bin ${bin.code} (${currentQty} → ${newQty})`);
+        console.log(`✅ Picked ${quantity} units of ${sku} from ${skuLocation} position in bin ${bin.code} (Total: ${currentQty} → ${newTotalQty})`);
       }
 
       // Update task status with detailed completion info (only for real tasks)
@@ -814,20 +974,18 @@ export const warehouseOperations = {
   },
 
   /**
-   * Guaranteed Smart Auto-Allocation: ALWAYS SUCCEEDS
+   * Mixed Barcode Auto-Allocation Strategy
    * 
-   * STRICT PRIORITY ORDER (prevents splitting across empty bins when same-SKU bins have capacity):
-   * 1. Fill same SKU bins to capacity (PRIORITY 1) - NEVER skip if space available
-   * 2. Then use empty bins for remaining quantity (PRIORITY 2) - only after same-SKU bins full
-   * 3. Use mixed SKU bins only if necessary (PRIORITY 3) - lowest priority
-   * 4. AUTO-CREATE NEW BINS for any remaining quantity (PRIORITY 4) - disabled by default
+   * PRIORITY ORDER for mixed barcode allocation:
+   * 1. Fill same SKU bins to capacity first (PRIORITY 1) - Consolidate same products
+   * 2. Search bins from first to last for any available space (PRIORITY 2) - Mix barcodes efficiently
    * 
-   * This ensures optimal consolidation and prevents unnecessary bin proliferation.
+   * This allows multiple different barcodes to share the same bin, maximizing space utilization.
    */
   async autoAllocateQuantity(warehouseId, sku, totalQuantity, preferences = {}) {
     try {
-      console.log('🔄 GUARANTEED Auto-allocating quantity:', { sku, totalQuantity, preferences });
-      console.log('📋 ALLOCATION STRATEGY: 1) Fill same-SKU bins first, 2) Use empty bins only if needed, 3) Never split unnecessarily');
+      console.log('🔄 MIXED BARCODE Auto-allocating quantity:', { sku, totalQuantity, preferences });
+      console.log('📋 ALLOCATION STRATEGY: 1) Fill same-SKU bins first, 2) Search all bins for available space (mixed barcodes allowed)');
       
       // Input validation
       if (!totalQuantity || isNaN(totalQuantity) || totalQuantity <= 0) {
@@ -843,7 +1001,7 @@ export const warehouseOperations = {
       let remainingQuantity = totalQuantity;
 
       // PHASE 1: Find and use existing bins with the SAME SKU (highest priority)
-      // This ensures we NEVER split across empty bins if same-SKU bins have capacity
+      // This ensures we consolidate same products first
       let sameSKUBins = bins.filter(bin => {
         // Must be active, have the same SKU, and have space
         const isActive = (bin.status === 'available' || bin.status === 'occupied');
@@ -854,10 +1012,8 @@ export const warehouseOperations = {
         
         return isActive && isSameSKU && hasSpace;
       }).sort((a, b) => {
-        // Sort by available space (larger first) for optimal bin utilization
-        const spaceA = a.capacity - (parseInt(a.currentQty) || 0);
-        const spaceB = b.capacity - (parseInt(b.currentQty) || 0);
-        return spaceB - spaceA;
+        // Sort by bin order (bin1, bin2, bin3, etc.) for sequential filling
+        return (a.code || '').localeCompare(b.code || '');
       });
       
       // Allocate to same-SKU bins first - fill each bin to capacity before moving to next
@@ -883,111 +1039,34 @@ export const warehouseOperations = {
           remainingQuantity -= allocateQty;
           console.log(`✅ Phase 1: Allocated ${allocateQty} to same-SKU bin ${bin.code} (${currentQty}+${allocateQty}=${newTotal}), remaining: ${remainingQuantity}`);
         }
-      }      // PHASE 2: Find and use EMPTY bins (only after same-SKU bins are filled)
-      // This ensures we consolidate same-SKU products before using new empty bins
+      }      // PHASE 2: Search ALL bins from first to last for available space (Mixed Barcode Strategy)
+      // This allows different barcodes to share bins, maximizing space utilization
       if (remainingQuantity > 0) {
-        let emptyBins = bins.filter(bin => {
-          // Must be active, empty or no SKU assigned
+        let availableBins = bins.filter(bin => {
+          // Must be active and have space, regardless of current SKU
           const isActive = (bin.status === 'available' || bin.status === 'occupied');
-          const isEmpty = (parseInt(bin.currentQty) || 0) === 0;
-          const hasNoSku = !bin.sku;
-          
-          return isActive && (isEmpty || hasNoSku);
-        }).sort((a, b) => {
-          // First sort by floor code (Ground Floor first)
-          const aFloorCode = (a.floorCode || '').toUpperCase();
-          const bFloorCode = (b.floorCode || '').toUpperCase();
-          
-          // If one is GF (Ground Floor) and the other isn't, prioritize GF
-          if (aFloorCode === 'GF' && bFloorCode !== 'GF') return -1;
-          if (bFloorCode === 'GF' && aFloorCode !== 'GF') return 1;
-          
-          // Then sort by floor code alphabetically
-          const floorCompare = aFloorCode.localeCompare(bFloorCode);
-          if (floorCompare !== 0) return floorCompare;
-          
-          // Then sort by rack code alphabetically
-          const rackCompare = (a.rackCode || '').localeCompare(b.rackCode || '');
-          if (rackCompare !== 0) return rackCompare;
-          
-          // Then sort by grid/aisle code alphabetically
-          const aGridCode = a.gridCode || '';
-          const bGridCode = b.gridCode || '';
-          const gridCompare = aGridCode.localeCompare(bGridCode);
-          if (gridCompare !== 0) return gridCompare;
-          
-          // Then sort by grid number (ascending) - Grid 1, Grid 2, Grid 3
-          // Note: In new hierarchical format, shelfLevel represents grid number
-          // Each grid contains multiple levels (A, B, C, D, E, F, G, H) with positions
-          const aGridNumber = parseInt(a.shelfLevel) || 1;
-          const bGridNumber = parseInt(b.shelfLevel) || 1;
-          if (aGridNumber !== bGridNumber) return aGridNumber - bGridNumber;
-          
-          // Then sort by level within grid (A, B, C, D, E, F, G, H)
-          const aLevel = a.level || 'A';
-          const bLevel = b.level || 'A';
-          const levelCompare = aLevel.localeCompare(bLevel);
-          if (levelCompare !== 0) return levelCompare;
-          
-          // Finally sort by position within level (1, 2, 3, 4, etc.)
-          const aPosition = parseInt(a.position) || 1;
-          const bPosition = parseInt(b.position) || 1;
-          if (aPosition !== bPosition) return aPosition - bPosition;
-          
-          // Fallback: sort by bin code for consistency
-          const binCodeCompare = (a.code || '').localeCompare(b.code || '');
-          return binCodeCompare;
-        });
-        
-        // Log sorting results for debugging
-        console.log('📊 Empty bins sorted in order:', 
-          emptyBins.slice(0, 5).map(bin => 
-            `${bin.code} (Floor: ${bin.floorCode || 'Unknown'}, Rack: ${bin.rackCode || 'Unknown'}, Grid: ${bin.gridCode || 'Unknown'}, GridNum: ${bin.shelfLevel || 1}, Level: ${bin.level || 'A'}, Pos: ${bin.position || 1})`
-          ));
-        
-        // Allocate to empty bins - fill each to capacity before moving to next
-        console.log(`📦 Phase 2: Empty bins available: ${emptyBins.length} (only used after same-SKU bins are full)`);
-        for (const bin of emptyBins) {
-          if (remainingQuantity <= 0) break;
-          
-          const allocateQty = Math.min(remainingQuantity, bin.capacity);
-          if (allocateQty > 0) {
-            allocationPlan.push({
-              bin,
-              allocatedQuantity: allocateQty,
-              reason: `New placement in empty bin - ${allocateQty} units (Rack: ${bin.rackCode}, Grid: ${bin.shelfLevel}, Level: ${bin.level || 'A'})`,
-              priority: 2,
-              newTotal: allocateQty,
-              utilization: ((allocateQty / bin.capacity) * 100).toFixed(1)
-            });
-            
-            remainingQuantity -= allocateQty;
-            console.log(`✅ Phase 2: Allocated ${allocateQty} to empty bin ${bin.code} (filling to capacity first), remaining: ${remainingQuantity}`);
-          }
-        }
-      }
-
-      // PHASE 3: Find and use MIXED SKU bins (lowest priority for existing bins)
-      if (remainingQuantity > 0) {
-        let mixedBins = bins.filter(bin => {
-          // Must be active, have different SKU, and have space
-          const isActive = (bin.status === 'available' || bin.status === 'occupied');
-          const isDifferentSKU = bin.sku && bin.sku !== sku;
           const currentQty = parseInt(bin.currentQty) || 0;
           const capacity = parseInt(bin.capacity) || 0;
           const hasSpace = capacity > currentQty;
           
-          return isActive && isDifferentSKU && hasSpace;
+          // Skip bins we already used in Phase 1 to avoid double allocation
+          const alreadyUsed = allocationPlan.some(plan => plan.bin.id === bin.id);
+          
+          return isActive && hasSpace && !alreadyUsed;
         }).sort((a, b) => {
-          // Sort by available space (larger first)
-          const spaceA = a.capacity - (parseInt(a.currentQty) || 0);
-          const spaceB = b.capacity - (parseInt(b.currentQty) || 0);
-          return spaceB - spaceA;
+          // Sort by bin order (bin1, bin2, bin3, etc.) for sequential filling
+          return (a.code || '').localeCompare(b.code || '');
         });
         
-        // Allocate to mixed-SKU bins if necessary
-        console.log(`🔄 Phase 3: Mixed SKU bins available: ${mixedBins.length}`);
-        for (const bin of mixedBins) {
+        // Log sorting results for debugging
+        console.log('📊 Available bins sorted in order:', 
+          availableBins.slice(0, 10).map(bin => 
+            `${bin.code} (CurrentSKU: ${bin.sku || 'Empty'}, Space: ${bin.capacity - (parseInt(bin.currentQty) || 0)}/${bin.capacity})`
+          ));
+        
+        // Allocate to available bins in order - fill each to capacity before moving to next
+        console.log(`📦 Phase 2: Available bins for mixed allocation: ${availableBins.length}`);
+        for (const bin of availableBins) {
           if (remainingQuantity <= 0) break;
           
           const currentQty = parseInt(bin.currentQty) || 0;
@@ -996,24 +1075,37 @@ export const warehouseOperations = {
           
           if (allocateQty > 0) {
             const newTotal = currentQty + allocateQty;
+            const isEmptyBin = currentQty === 0;
+            const isMixedBin = currentQty > 0 && bin.sku && bin.sku !== sku;
+            
+            let reason = '';
+            if (isEmptyBin) {
+              reason = `New placement in empty bin - ${allocateQty} units`;
+            } else if (isMixedBin) {
+              reason = `Mixed storage - Adding ${allocateQty} units of ${sku} to bin with ${bin.sku}`;
+            } else {
+              reason = `Adding ${allocateQty} units to available space`;
+            }
+            
             allocationPlan.push({
               bin,
               allocatedQuantity: allocateQty,
-              reason: `Mixed storage - Adding ${allocateQty} units to bin with ${bin.sku}`,
-              priority: 3,
+              reason,
+              priority: 2,
               newTotal,
-              utilization: ((newTotal / bin.capacity) * 100).toFixed(1)
+              utilization: ((newTotal / bin.capacity) * 100).toFixed(1),
+              isMixed: isMixedBin
             });
             
             remainingQuantity -= allocateQty;
-            console.log(`✅ Phase 3: Allocated ${allocateQty} to mixed-SKU bin ${bin.code}, remaining: ${remainingQuantity}`);
+            console.log(`✅ Phase 2: Allocated ${allocateQty} to bin ${bin.code} (${isEmptyBin ? 'Empty' : isMixedBin ? 'Mixed' : 'Available'} bin: ${currentQty}+${allocateQty}=${newTotal}), remaining: ${remainingQuantity}`);
           }
         }
       }
 
-      // PHASE 4: NO LONGER CREATE NEW BINS AUTOMATICALLY
+      // PHASE 3: NO LONGER CREATE NEW BINS AUTOMATICALLY
       if (remainingQuantity > 0) {
-        console.log(`❌ Phase 4: ${remainingQuantity} remaining units could not be allocated - no available bins found`);
+        console.log(`❌ Phase 3: ${remainingQuantity} remaining units could not be allocated - no available bins found`);
         console.log(`❌ Allocation failed: All existing bins are at capacity or unavailable`);
         
         // Don't create new bins automatically - return partial allocation
@@ -1037,7 +1129,7 @@ export const warehouseOperations = {
           summary: {
             phase1Allocations: allocationPlan.filter(a => a.priority === 1).length,
             phase2Allocations: allocationPlan.filter(a => a.priority === 2).length,
-            phase3Allocations: allocationPlan.filter(a => a.priority === 3).length,
+            mixedBinAllocations: allocationPlan.filter(a => a.isMixed).length,
             autoCreatedBins: 0, // No auto-created bins
             averageUtilization: allocationPlan.length > 0 ? 
               allocationPlan.reduce((sum, a) => sum + parseFloat(a.utilization), 0) / allocationPlan.length : 0
@@ -1054,18 +1146,19 @@ export const warehouseOperations = {
       // Count how many SKUs were allocated to same-SKU bins (first priority)
       const sameSKUAllocations = allocationPlan.filter(a => a.priority === 1).length;
       
-      // Count how many were allocated in shelf1->bin1 order (second priority)
-      const orderedBinAllocations = allocationPlan.filter(a => a.priority === 2).length;
+      // Count how many were allocated to mixed bins (second priority)
+      const mixedAllocations = allocationPlan.filter(a => a.priority === 2).length;
+      const mixedBinAllocations = allocationPlan.filter(a => a.isMixed).length;
       
-      console.log('🎉 GUARANTEED allocation complete:', {
+      console.log('🎉 MIXED BARCODE allocation complete:', {
         totalQuantity,
         totalAllocated,
         remainingQuantity,
         isFullyAllocated,
         binCount: allocationPlan.length,
-        autoCreatedBins: allocationPlan.filter(a => a.autoCreated).length,
         sameSKUAllocations,
-        orderedBinAllocations,
+        mixedAllocations,
+        mixedBinAllocations,
         strategyValidation: sameSKUAllocations > 0 ? 'Same-SKU bins prioritized correctly' : 'No same-SKU bins found'
       });
 
@@ -1077,22 +1170,22 @@ export const warehouseOperations = {
       return {
         allocationPlan,
         totalAllocated,
-        remainingQuantity: 0, // Should always be 0 with guaranteed allocation
-        isFullyAllocated: true, // Should always be true with guaranteed allocation
+        remainingQuantity: 0, // Should always be 0 with successful allocation
+        isFullyAllocated: true, // Should always be true with successful allocation
         averageUtilization,
         summary: {
           sameSKUAllocations: allocationPlan.filter(a => a.priority === 1).length,
-          emptyBinAllocations: allocationPlan.filter(a => a.priority === 2).length,
-          mixedSKUAllocations: allocationPlan.filter(a => a.priority === 3).length,
-          autoCreatedBins: allocationPlan.filter(a => a.autoCreated).length,
+          mixedAllocations: allocationPlan.filter(a => a.priority === 2).length,
+          mixedBinAllocations: allocationPlan.filter(a => a.isMixed).length,
+          autoCreatedBins: 0, // No auto-created bins in this strategy
           totalBinsUsed: allocationPlan.length,
-          hasAutoCreated: allocationPlan.filter(a => a.autoCreated).length > 0,
+          hasAutoCreated: false,
           efficiency: averageUtilization >= 70 ? 'Excellent' : 'Good',
-          orderedAllocation: true // Flag to indicate new allocation logic is being used
+          mixedBarcodeStrategy: true // Flag to indicate mixed barcode allocation is being used
         }
       };
     } catch (error) {
-      console.error('❌ Error in guaranteed auto-allocation:', error);
+      console.error('❌ Error in mixed barcode auto-allocation:', error);
       
       // NO EMERGENCY FALLBACK - return error instead of creating bins
       throw new Error(`Allocation failed: ${error.message}. No available bins found with sufficient capacity. Please add more bins or free up existing bin space.`);

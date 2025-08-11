@@ -123,27 +123,65 @@ export default function PickOperations() {
     }
   };
 
+  // Helper function to remove undefined values recursively from an object
+  const sanitizeForFirestore = (obj) => {
+    if (obj === null || obj === undefined) {
+      return null;
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => sanitizeForFirestore(item)).filter(item => item !== null && item !== undefined);
+    }
+    
+    if (typeof obj === 'object') {
+      const sanitized = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined && value !== null) {
+          const sanitizedValue = sanitizeForFirestore(value);
+          if (sanitizedValue !== undefined && sanitizedValue !== null) {
+            sanitized[key] = sanitizedValue;
+          }
+        }
+      }
+      return sanitized;
+    }
+    
+    // Convert undefined to null for Firestore
+    if (obj === undefined) {
+      return null;
+    }
+    
+    return obj;
+  };
+
   const addToHistory = async (results) => {
     const historyItem = {
       timestamp: new Date().toISOString(),
       fileName: uploadedFile?.name || 'Manual Pick',
-      totalItems: results.summary.total,
-      successCount: results.summary.successful,
-      partialCount: results.summary.partial || 0,
-      failedCount: results.summary.failed,
+      totalItems: results.summary?.total || 0,
+      successCount: results.summary?.successful || 0,
+      partialCount: results.summary?.partial || 0,
+      failedCount: results.summary?.failed || 0,
       warehouse: currentWarehouse?.name || 'Unknown',
       warehouseId: currentWarehouse?.id || 'unknown',
       warehouseName: currentWarehouse?.name || 'Unknown',
-      executionDetails: results, // Store the full execution details
-      type: 'pick' // Distinguish from put-away operations
+      executionDetails: results || {}, // Store the full execution details
+      type: 'pick', // Distinguish from put-away operations
+      mixedBarcodeStrategy: true,
+      operationType: 'pick'
     };
 
     try {
+      // Sanitize the history item to remove undefined values
+      const sanitizedHistoryItem = sanitizeForFirestore(historyItem);
+      
+      console.log('📝 Saving sanitized history item:', JSON.stringify(sanitizedHistoryItem, null, 2));
+      
       // Save to Firestore - let Firestore generate the ID automatically
       const savedItem = await historyService.saveOperationHistory(
         currentWarehouse.id,
         historyService.operationTypes.PICK,
-        historyItem
+        sanitizedHistoryItem
       );
       
       // Add to local state (most recent first)
@@ -174,113 +212,280 @@ export default function PickOperations() {
     const results = [];
 
     try {
+      console.log('🔍 PHASE 1: Checking availability for ALL items before execution...');
+      
+      // PHASE 1: Check availability for ALL items first (MIXED BARCODE STRATEGY)
+      const availabilityChecks = [];
+      const unavailableItems = [];
+      
+      setProgress(10); // Initial progress for availability check
+      
       for (let i = 0; i < parsedData.items.length; i++) {
         const item = parsedData.items[i];
-        setProgress((i / parsedData.items.length) * 100);
-
+        
+        // Ensure item has required properties with defaults
+        const safeItem = {
+          barcode: item?.barcode || 'unknown',
+          quantity: item?.quantity || 0,
+          ...item // Keep all other properties
+        };
+        
         try {
+          console.log(`📋 Checking availability for ${safeItem.barcode} (${safeItem.quantity} units)...`);
+          
           // Find product locations for picking using warehouseOperations service
           const pickingResult = await warehouseOperations.findProductsForPicking(
             currentWarehouse.id,
-            item.barcode,
-            parseInt(item.quantity)
+            safeItem.barcode,
+            parseInt(safeItem.quantity)
           );
           
-          console.log(`📋 Pick Result for ${item.barcode}:`, pickingResult);
-          
           if (!pickingResult || !pickingResult.isFullyAvailable) {
-            // Not enough quantity available
-            results.push({
-              ...item,
-              status: 'Failed',
-              error: `Insufficient quantity available. Required: ${item.quantity}, Available: ${pickingResult?.totalAvailable || 0}`,
-              pickedBins: [],
-              availableQty: pickingResult?.totalAvailable || 0,
-              pickedQty: 0
+            // Item not fully available - mark as unavailable
+            unavailableItems.push({
+              ...safeItem,
+              available: pickingResult?.totalAvailable || 0,
+              shortfall: parseInt(safeItem.quantity) - (pickingResult?.totalAvailable || 0)
             });
-            continue;
+            
+            console.log(`❌ ${safeItem.barcode}: Insufficient quantity. Required: ${safeItem.quantity}, Available: ${pickingResult?.totalAvailable || 0}`);
+          } else {
+            // Item fully available - store for execution
+            availabilityChecks.push({
+              item: safeItem,
+              pickingResult
+            });
+            
+            console.log(`✅ ${safeItem.barcode}: Fully available (${pickingResult.totalAvailable} units)`);
           }
+        } catch (error) {
+          console.error(`Error checking availability for ${safeItem.barcode}:`, error);
+          unavailableItems.push({
+            ...safeItem,
+            available: 0,
+            shortfall: parseInt(safeItem.quantity),
+            error: error.message || 'Unknown error'
+          });
+        }
+      }
+      
+      // If ANY item is not available, STOP execution completely
+      if (unavailableItems.length > 0) {
+        console.log('❌ EXECUTION STOPPED: One or more items not fully available');
+        console.log('🧠 MIXED BARCODE STRATEGY: Checked both primary and mixed bin contents for availability');
+        
+        // Create error results for all items
+        for (const originalItem of parsedData.items) {
+          const safeOriginalItem = {
+            barcode: originalItem?.barcode || 'unknown',
+            quantity: originalItem?.quantity || 0,
+            ...originalItem
+          };
+          
+          const unavailableItem = unavailableItems.find(ui => ui.barcode === safeOriginalItem.barcode);
+          
+          if (unavailableItem) {
+            results.push({
+              ...safeOriginalItem,
+              status: 'Failed',
+              error: unavailableItem.error || `Insufficient quantity available (searched all bins including mixed contents). Required: ${safeOriginalItem.quantity}, Available: ${unavailableItem.available}`,
+              location: 'Unavailable',
+              locations: 'Unavailable',
+              pickedBins: [],
+              availableQty: unavailableItem.available || 0,
+              pickedQty: 0,
+              shortfall: unavailableItem.shortfall || 0,
+              mixedBins: 0,
+              fifoCompliant: false
+            });
+          } else {
+            // Item was available but we're not executing due to other unavailable items
+            results.push({
+              ...safeOriginalItem,
+              status: 'Failed',
+              error: `Pick operation cancelled due to unavailable items in the same batch (Mixed Barcode Strategy: all-or-nothing execution)`,
+              location: 'Cancelled',
+              locations: 'Cancelled',
+              pickedBins: [],
+              availableQty: 0,
+              pickedQty: 0,
+              shortfall: 0,
+              mixedBins: 0,
+              fifoCompliant: false
+            });
+          }
+        }
+        
+        // Show detailed error message
+        const errorDetails = unavailableItems.map(item => 
+          `${item.barcode}: Required ${item.quantity}, Available ${item.available} (Short ${item.shortfall})`
+        ).join('; ');
+        
+        showError(`🔍 Mixed Barcode Pick Check Failed! Unavailable items: ${errorDetails}`);
+        
+        // Set execution results and exit
+        setProgress(100);
+        const executionResult = {
+          items: results || [],
+          summary: {
+            total: results?.length || 0,
+            successful: 0,
+            partial: 0,
+            failed: results?.length || 0,
+            executedAt: new Date().toISOString(),
+            warehouse: currentWarehouse?.name || 'Unknown',
+            warehouseId: currentWarehouse?.id || 'unknown',
+            mixedBins: 0,
+            mixedBarcodeStrategy: true,
+            availabilityCheckFailed: true,
+            unavailableItems: unavailableItems?.length || 0,
+            operationType: 'pick'
+          }
+        };
+        
+        setExecutionResults(executionResult);
+        addToHistory(executionResult);
+        return;
+      }
+      
+      console.log('✅ PHASE 1 COMPLETE: All items are fully available. Proceeding with FIFO execution...');
+      console.log('🧠 MIXED BARCODE STRATEGY: Pick plans will be recalculated before each execution to ensure accuracy');
+      setProgress(25);
+      
+      // PHASE 2: Execute picks for all available items with FIFO logic
+      console.log('🚀 PHASE 2: Executing FIFO picks for all items...');
+      
+      for (let i = 0; i < availabilityChecks.length; i++) {
+        const { item: originalItem } = availabilityChecks[i];
+        const safeItem = {
+          barcode: originalItem?.barcode || 'unknown',
+          quantity: originalItem?.quantity || 0,
+          ...originalItem
+        };
+        
+        const progressPercent = 25 + ((i / availabilityChecks.length) * 70); // 25% to 95%
+        setProgress(progressPercent);
 
-          // Execute the pick operations for this item
-          const pickedItems = pickingResult.pickPlan.map(plan => ({
+        try {
+          console.log(`📦 Executing FIFO pick for ${safeItem.barcode} (${safeItem.quantity} units)...`);
+          
+          // CRITICAL FIX: Recalculate pick plan just before execution
+          // This ensures we have current bin quantities after previous picks
+          const freshPickingResult = await warehouseOperations.findProductsForPicking(
+            currentWarehouse.id,
+            safeItem.barcode,
+            parseInt(safeItem.quantity)
+          );
+          
+          // Verify the item is still fully available after previous picks
+          if (!freshPickingResult || !freshPickingResult.isFullyAvailable) {
+            throw new Error(`SKU ${safeItem.barcode} no longer fully available. Required: ${safeItem.quantity}, Available: ${freshPickingResult?.totalAvailable || 0}. This occurred due to bin changes during earlier picks.`);
+          }
+          
+          // Execute the pick operations for this item using fresh FIFO pick plan
+          const pickedItems = freshPickingResult.pickPlan.map(plan => ({
             binId: plan.id,
             quantity: plan.pickQuantity,
-            sku: item.barcode
+            sku: safeItem.barcode
           }));
           
-          // Manually execute the pick operations
+          // Create temporary pick task ID
+          const tempTaskId = `excel-pick-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          
+          // Execute the pick with FIFO compliance
+          const pickExecutionResult = await warehouseOperations.executePick(
+            currentWarehouse.id,
+            tempTaskId,
+            pickedItems
+          );
+          
+          if (!pickExecutionResult.success) {
+            throw new Error(pickExecutionResult.message || 'Failed to execute pick');
+          }
+          
+          // Add successful result with mixed barcode support and FIFO details
+          results.push({
+            ...safeItem,
+            status: 'Completed',
+            location: freshPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
+            locations: freshPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
+            pickedBins: freshPickingResult.pickPlan?.map(p => ({
+              binId: p.id || 'unknown',
+              binCode: p.code || 'unknown',
+              rackCode: p.rackCode || 'unknown',
+              quantity: p.pickQuantity || 0,
+              fifoReason: p.fifoReason || 'FIFO',
+              pickOrder: p.pickOrder || 0,
+              isMixed: p.isMixed || false,
+              originalBinSKU: p.originalBinSKU || safeItem.barcode
+            })) || [],
+            executedAt: new Date().toISOString(),
+            availableQty: freshPickingResult.totalAvailable || 0,
+            pickedQty: parseInt(safeItem.quantity) || 0,
+            mixedBins: freshPickingResult.pickPlan?.filter(p => p.isMixed).length || 0,
+            fifoCompliant: true
+          });
+          
+          console.log(`✅ Successfully picked ${safeItem.barcode} from ${freshPickingResult.pickPlan.length} bin(s) using FIFO logic`);
+          
+          // Small delay to show progress
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+        } catch (pickError) {
+          console.error(`Error executing pick for ${safeItem.barcode}:`, pickError);
+          
+          // For execution errors, we still need to recalculate current availability
           try {
-            // Create temporary pick task ID
-            const tempTaskId = `excel-pick-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-            
-            // Execute the pick
-            const pickExecutionResult = await warehouseOperations.executePick(
+            const errorPickingResult = await warehouseOperations.findProductsForPicking(
               currentWarehouse.id,
-              tempTaskId,
-              pickedItems
+              safeItem.barcode,
+              parseInt(safeItem.quantity)
             );
             
-            if (!pickExecutionResult.success) {
-              throw new Error(pickExecutionResult.message || 'Failed to execute pick');
-            }
-            
-            // Add successful result
             results.push({
-              ...item,
-              status: 'Completed',
-              location: pickingResult.pickPlan.map(p => p.code).join(', '), // Use singular 'location'
-              locations: pickingResult.pickPlan.map(p => p.code).join(', '), // Keep plural for backward compatibility
-              pickedBins: pickingResult.pickPlan.map(p => ({
-                binId: p.id,
-                binCode: p.code,
-                rackCode: p.rackCode,
-                quantity: p.pickQuantity,
-                fifoReason: p.fifoReason,
-                pickOrder: p.pickOrder
-              })),
-              executedAt: new Date().toISOString(),
-              availableQty: pickingResult.totalAvailable || 0,
-              pickedQty: item.quantity
-            });
-          } catch (pickError) {
-            console.error(`Error executing pick for ${item.barcode}:`, pickError);
-            results.push({
-              ...item,
+              ...safeItem,
               status: 'Failed',
               error: pickError.message || 'Failed to execute pick',
-              location: pickingResult.pickPlan.map(p => p.code).join(', '), // Use singular 'location'
-              locations: pickingResult.pickPlan.map(p => p.code).join(', '), // Keep plural for backward compatibility
+              location: errorPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
+              locations: errorPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
               pickedBins: [],
-              availableQty: pickingResult.totalAvailable || 0,
-              pickedQty: 0
+              availableQty: errorPickingResult.totalAvailable || 0,
+              pickedQty: 0,
+              mixedBins: 0,
+              fifoCompliant: false
+            });
+          } catch (secondError) {
+            // Fallback if even the error check fails
+            results.push({
+              ...safeItem,
+              status: 'Failed',
+              error: pickError.message || 'Failed to execute pick',
+              location: 'Unknown',
+              locations: 'Unknown',
+              pickedBins: [],
+              availableQty: 0,
+              pickedQty: 0,
+              mixedBins: 0,
+              fifoCompliant: false
             });
           }
-
-          // Small delay to show progress
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-        } catch (error) {
-          console.error('Error picking item:', error);
-          results.push({
-            ...item,
-            status: 'Failed',
-            error: error.message,
-            location: null,
-            availableQty: 0
-          });
         }
       }
 
       setProgress(100);
       const executionResult = {
-        items: results,
+        items: results || [],
         summary: {
-          total: results.length,
-          successful: results.filter(r => r.status === 'Completed').length,
-          partial: results.filter(r => r.status === 'Partial').length,
-          failed: results.filter(r => r.status === 'Failed').length,
+          total: results?.length || 0,
+          successful: results?.filter(r => r.status === 'Completed').length || 0,
+          partial: results?.filter(r => r.status === 'Partial').length || 0,
+          failed: results?.filter(r => r.status === 'Failed').length || 0,
           executedAt: new Date().toISOString(),
-          warehouse: currentWarehouse.name
+          warehouse: currentWarehouse?.name || 'Unknown',
+          warehouseId: currentWarehouse?.id || 'unknown',
+          mixedBins: results?.reduce((sum, r) => sum + (r.mixedBins || 0), 0) || 0,
+          mixedBarcodeStrategy: true,
+          operationType: 'pick'
         }
       };
       

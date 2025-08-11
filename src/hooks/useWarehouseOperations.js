@@ -153,53 +153,32 @@ export function useWarehouseOperations() {
   }, [currentWarehouse, showSuccess, showError]);
 
   const findProductsForPicking = useCallback(async (sku, requiredQuantity) => {
-    if (!currentWarehouse) return { pickPlan: [], totalAvailable: 0, shortfall: requiredQuantity };
+    if (!currentWarehouse) return { pickPlan: [], totalAvailable: 0, shortfall: requiredQuantity, isFullyAvailable: false };
     
     try {
       setLoading(true);
       
-      // Get bins containing the SKU
-      const productBins = bins
-        .filter(bin => bin.sku === sku && bin.currentQty > 0)
-        .sort((a, b) => {
-          // FIFO by expiry date, then by grid level
-          if (a.expiryDate && b.expiryDate) {
-            const dateA = new Date(a.expiryDate);
-            const dateB = new Date(b.expiryDate);
-            if (dateA.getTime() !== dateB.getTime()) {
-              return dateA.getTime() - dateB.getTime();
-            }
-          }
-          return a.shelfLevel - b.shelfLevel;
-        });
-
-      // Calculate pick plan
-      let remainingQuantity = requiredQuantity;
-      const pickPlan = [];
-
-      for (const bin of productBins) {
-        if (remainingQuantity <= 0) break;
-
-        const pickQuantity = Math.min(bin.currentQty, remainingQuantity);
-        pickPlan.push({
-          ...bin,
-          pickQuantity,
-        });
-        remainingQuantity -= pickQuantity;
-      }
-
-      return {
-        pickPlan,
-        totalAvailable: productBins.reduce((sum, bin) => sum + bin.currentQty, 0),
-        shortfall: Math.max(0, remainingQuantity),
-      };
+      // Use the enhanced warehouseOperations service which supports mixed barcodes and FIFO
+      const result = await warehouseOperations.findProductsForPicking(
+        currentWarehouse.id,
+        sku,
+        requiredQuantity
+      );
+      
+      return result;
     } catch (error) {
       showError(`Error finding products for picking: ${error.message}`);
-      return { pickPlan: [], totalAvailable: 0, shortfall: requiredQuantity };
+      return { 
+        pickPlan: [], 
+        totalAvailable: 0, 
+        shortfall: requiredQuantity, 
+        isFullyAvailable: false,
+        fifoCompliant: false
+      };
     } finally {
       setLoading(false);
     }
-  }, [currentWarehouse, bins, showError]);
+  }, [currentWarehouse, showError]);
 
   const createPickTask = useCallback(async (taskData) => {
     if (!currentWarehouse) return null;

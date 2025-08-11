@@ -338,12 +338,15 @@ export default function PutAwayOperations() {
               executedAt: new Date().toISOString(),
               binCount: allocationResult.allocationPlan.length,
               autoCreatedBins: allocationResult.summary?.autoCreatedBins || 0,
+              mixedAllocations: allocationResult.summary?.mixedBinAllocations || 0,
               // Store actual allocation details for accurate reporting
               allocationPlan: allocationResult.allocationPlan.map(plan => ({
                 binCode: plan.bin.code,
                 binLocation: plan.bin.location?.fullCode || plan.bin.code,
                 allocatedQuantity: plan.allocatedQuantity,
-                reason: plan.reason
+                reason: plan.reason,
+                isMixed: plan.isMixed || false,
+                priority: plan.priority
               }))
             });
             
@@ -384,7 +387,9 @@ export default function PutAwayOperations() {
           executedAt: new Date().toISOString(),
           warehouse: currentWarehouse.name,
           autoCreatedBins: autoCreatedBinsTotal,
-          emergencyAllocations: emergencyCount
+          emergencyAllocations: emergencyCount,
+          mixedAllocations: results.reduce((sum, r) => sum + (r.mixedAllocations || 0), 0),
+          mixedBarcodeStrategy: true
         }
       });
 

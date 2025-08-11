@@ -241,3 +241,23 @@ For questions or support:
 - Create an issue in the GitHub repository
 - Check the Firebase documentation for backend-related questions
 - Review Material-UI documentation for UI components
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+in settings report generation
+show all the report type and report scope.
+every report type needed like this stockmovements(complete) and fullreport(all scope)

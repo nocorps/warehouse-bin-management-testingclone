@@ -1690,16 +1690,16 @@ export class PrintService {
     for (const item of successfulItems) {
       const barcode = item.barcode || item.sku || 'N/A';
       
-      // Check if we have actual allocation details (new format)
+      // Check if we have actual allocation details (new mixed barcode format)
       if (item.allocationPlan && Array.isArray(item.allocationPlan)) {
-        // Use actual allocation details - this is the accurate approach
+        // Use actual allocation details - this is the accurate approach for mixed barcodes
         item.allocationPlan.forEach(allocation => {
           tableHTML += `
             <tr>
               <td>${barcode}</td>
               <td>${allocation.binLocation || allocation.binCode}</td>
               <td>${allocation.allocatedQuantity}</td>
-              <td>Put-Away</td>
+              <td>Put-Away${allocation.isMixed ? ' (Mixed)' : ''}</td>
             </tr>
           `;
         });
