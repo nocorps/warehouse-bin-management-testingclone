@@ -785,15 +785,7 @@ export class ReportService {
               locations = [locationStr];
             }
             
-            // Always add a row with the total quantity and all locations joined with commas
-            reportRows.push([
-              barcode,
-              locations.join(', '),
-              totalQty,
-              operationType
-            ]);
-            
-            // Also add individual rows for each location
+            // Add individual rows for each location (atomic rows only)
             if (locations.length > 1) {
               const baseQtyPerBin = Math.floor(totalQty / locations.length);
               const remainder = totalQty % locations.length;
@@ -807,6 +799,14 @@ export class ReportService {
                   operationType
                 ]);
               });
+            } else {
+              // Single location - add atomic row
+              reportRows.push([
+                barcode,
+                locations[0],
+                totalQty,
+                operationType
+              ]);
             }
           });
         } else if (reportData.data.inventory) {
@@ -830,7 +830,7 @@ export class ReportService {
               const baseQtyPerBin = Math.floor(totalQty / item.locations.length);
               const remainder = totalQty % item.locations.length;
               
-              // Create a row for each location
+              // Create individual atomic rows for each location only
               item.locations.forEach((loc, index) => {
                 const locationStr = typeof loc === 'object' ? (loc.binCode || 'N/A') : (loc || 'N/A');
                 const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
@@ -842,18 +842,6 @@ export class ReportService {
                   'Current Stock'
                 ]);
               });
-              
-              // Also add a combined row with all locations
-              const allLocations = item.locations.map(loc => 
-                typeof loc === 'object' ? (loc.binCode || 'N/A') : (loc || 'N/A')
-              ).join(', ');
-              
-              reportRows.push([
-                barcode,
-                allLocations,
-                totalQty,
-                'Current Stock'
-              ]);
             } else if (typeof item.locations === 'string') {
               // Process location string
               let locations = [];
@@ -907,7 +895,7 @@ export class ReportService {
                 const baseQtyPerBin = Math.floor(totalQty / locations.length);
                 const remainder = totalQty % locations.length;
                 
-                // Create a row for each location
+                // Create individual atomic rows for each location only
                 locations.forEach((location, index) => {
                   const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
                   reportRows.push([
@@ -917,14 +905,6 @@ export class ReportService {
                     'Current Stock'
                   ]);
                 });
-                
-                // Also add a combined row
-                reportRows.push([
-                  barcode,
-                  locations.join(', '),
-                  totalQty,
-                  'Current Stock'
-                ]);
               } else {
                 // Single location
                 reportRows.push([

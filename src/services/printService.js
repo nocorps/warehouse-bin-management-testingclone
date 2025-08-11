@@ -2067,6 +2067,324 @@ export class PrintService {
       }
     `;
   }
+
+  /**
+   * Print generic report from report service
+   */
+  async printReport(reportData, options = {}) {
+    try {
+      console.log('🖨️ Printing report:', reportData.config.type);
+      
+      const { type } = reportData.config;
+      
+      // Route to appropriate print function based on report type
+      switch (type) {
+        case 'stock_movements':
+          return await this.printStockMovementReport(reportData, options);
+        case 'inventory_summary':
+          return await this.printInventoryReport(reportData, options);
+        case 'putaway_summary':
+          return await this.printPutAwayReport(reportData.data.operations || [], options);
+        case 'pick_summary':
+          return await this.printPickReport(reportData.data.operations || [], options);
+        case 'bin_utilization':
+          return await this.printBinUtilizationReport(reportData, options);
+        default:
+          // Generic print for any other report type
+          return await this.printGenericReport(reportData, options);
+      }
+    } catch (error) {
+      console.error('❌ Error printing report:', error);
+      throw new Error(`Failed to print report: ${error.message}`);
+    }
+  }
+
+  /**
+   * Print inventory report
+   */
+  async printInventoryReport(reportData, options = {}) {
+    try {
+      const html = await this.generateInventoryReportHTML(reportData, options);
+      this.openPrintWindow(html, `Inventory Report - ${new Date().toLocaleDateString()}`);
+    } catch (error) {
+      console.error('Error printing inventory report:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Print bin utilization report
+   */
+  async printBinUtilizationReport(reportData, options = {}) {
+    try {
+      const html = await this.generateBinUtilizationReportHTML(reportData, options);
+      this.openPrintWindow(html, `Bin Utilization Report - ${new Date().toLocaleDateString()}`);
+    } catch (error) {
+      console.error('Error printing bin utilization report:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Print generic report
+   */
+  async printGenericReport(reportData, options = {}) {
+    try {
+      const html = await this.generateGenericReportHTML(reportData, options);
+      this.openPrintWindow(html, `${reportData.config.type} Report - ${new Date().toLocaleDateString()}`);
+    } catch (error) {
+      console.error('Error printing generic report:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate inventory report HTML
+   */
+  async generateInventoryReportHTML(reportData, options = {}) {
+    const { config, data } = reportData;
+    const inventory = data.inventory || [];
+    const summary = data.summary || {};
+
+    const styles = this.getReportStyles();
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Inventory Report</title>
+        <style>${styles}</style>
+      </head>
+      <body>
+        <div class="report-container">
+          <div class="report-header">
+            <h1>📦 Inventory Report</h1>
+            <div class="report-info">
+              <p><strong>Warehouse:</strong> ${config.warehouseName || 'N/A'}</p>
+              <p><strong>Generated:</strong> ${new Date(reportData.generatedAt).toLocaleString()}</p>
+              <p><strong>Scope:</strong> ${config.scope || 'Full'}</p>
+            </div>
+          </div>
+
+          <div class="summary-section">
+            <h2>📊 Summary</h2>
+            <div class="summary-grid">
+              <div class="summary-item">
+                <span class="label">Total SKUs:</span>
+                <span class="value">${summary.totalSkus || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Total Quantity:</span>
+                <span class="value">${summary.totalQuantity || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Occupied Bins:</span>
+                <span class="value">${summary.totalBinsOccupied || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Utilization Rate:</span>
+                <span class="value">${summary.utilizationRate || 0}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="data-section">
+            <h2>📋 Current Stock Details</h2>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Location</th>
+                  <th>Quantity</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${inventory.map(item => {
+                  if (item.locations && Array.isArray(item.locations)) {
+                    return item.locations.map(loc => `
+                      <tr>
+                        <td>${item.sku || 'N/A'}</td>
+                        <td>${loc.binCode || 'N/A'}</td>
+                        <td>${loc.quantity || 0}</td>
+                        <td>Current Stock</td>
+                      </tr>
+                    `).join('');
+                  } else {
+                    return `
+                      <tr>
+                        <td>${item.sku || 'N/A'}</td>
+                        <td>N/A</td>
+                        <td>${item.totalQuantity || 0}</td>
+                        <td>Current Stock</td>
+                      </tr>
+                    `;
+                  }
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="footer">
+            <p>Generated by Warehouse Management System on ${new Date().toLocaleString()}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Generate bin utilization report HTML
+   */
+  async generateBinUtilizationReportHTML(reportData, options = {}) {
+    const { config, data } = reportData;
+    const utilization = data.utilization || [];
+    const summary = data.summary || {};
+
+    const styles = this.getReportStyles();
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Bin Utilization Report</title>
+        <style>${styles}</style>
+      </head>
+      <body>
+        <div class="report-container">
+          <div class="report-header">
+            <h1>🏗️ Bin Utilization Report</h1>
+            <div class="report-info">
+              <p><strong>Warehouse:</strong> ${config.warehouseName || 'N/A'}</p>
+              <p><strong>Generated:</strong> ${new Date(reportData.generatedAt).toLocaleString()}</p>
+              <p><strong>Scope:</strong> ${config.scope || 'Full'}</p>
+            </div>
+          </div>
+
+          <div class="summary-section">
+            <h2>📊 Summary</h2>
+            <div class="summary-grid">
+              <div class="summary-item">
+                <span class="label">Total Bins:</span>
+                <span class="value">${summary.totalBins || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Occupied Bins:</span>
+                <span class="value">${summary.occupiedBins || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Total Capacity:</span>
+                <span class="value">${summary.totalCapacity || 0}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">Overall Utilization:</span>
+                <span class="value">${summary.overallUtilization || 0}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="data-section">
+            <h2>📋 Bin Details</h2>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Bin Code</th>
+                  <th>Rack</th>
+                  <th>Capacity</th>
+                  <th>Current Qty</th>
+                  <th>Utilization %</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${utilization.map(bin => `
+                  <tr>
+                    <td>${bin.binCode || 'N/A'}</td>
+                    <td>${bin.rackCode || 'N/A'}</td>
+                    <td>${bin.capacity || 0}</td>
+                    <td>${bin.currentQuantity || 0}</td>
+                    <td>${bin.utilizationPercent || 0}%</td>
+                    <td>${bin.status || 'Available'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="footer">
+            <p>Generated by Warehouse Management System on ${new Date().toLocaleString()}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Generate generic report HTML
+   */
+  async generateGenericReportHTML(reportData, options = {}) {
+    const { config, data } = reportData;
+    const styles = this.getReportStyles();
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${config.type} Report</title>
+        <style>${styles}</style>
+      </head>
+      <body>
+        <div class="report-container">
+          <div class="report-header">
+            <h1>📋 ${config.type.replace(/_/g, ' ').toUpperCase()} Report</h1>
+            <div class="report-info">
+              <p><strong>Warehouse:</strong> ${config.warehouseName || 'N/A'}</p>
+              <p><strong>Generated:</strong> ${new Date(reportData.generatedAt).toLocaleString()}</p>
+              <p><strong>Scope:</strong> ${config.scope || 'Full'}</p>
+            </div>
+          </div>
+
+          <div class="data-section">
+            <h2>📊 Report Data</h2>
+            <p>Report type: ${config.type}</p>
+            <p>This report contains ${JSON.stringify(data).length} characters of data</p>
+            <p>Please use Excel export for detailed data analysis.</p>
+          </div>
+
+          <div class="footer">
+            <p>Generated by Warehouse Management System on ${new Date().toLocaleString()}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Open print window with HTML content
+   */
+  openPrintWindow(html, title = 'Report') {
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.focus();
+      
+      // Wait for content to load, then print
+      setTimeout(() => {
+        printWindow.print();
+        // Optionally close the window after printing
+        // printWindow.close();
+      }, 500);
+    } else {
+      throw new Error('Unable to open print window. Please check your browser popup settings.');
+    }
+  }
 }
 
 export const printService = new PrintService();

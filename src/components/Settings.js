@@ -48,7 +48,6 @@ import {
   Assessment as ReportIcon,
   GetApp as ExportIcon,
   Print as PrintIcon,
-  PictureAsPdf as PdfIcon,
   TableChart as ExcelIcon,
   DateRange as DateRangeIcon,
   Inventory as InventoryIcon,
@@ -106,7 +105,7 @@ export default function Settings() {
   const [startDate, setStartDate] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)); // 30 days ago
   const [endDate, setEndDate] = useState(new Date());
   const [reportGenerating, setReportGenerating] = useState(false);
-  const [reportScope, setReportScope] = useState('date_range'); // 'date_range', 'full', 'current', 'selected'
+  const [reportScope, setReportScope] = useState('full'); // Default to full report as requested
   const [selectedSkus, setSelectedSkus] = useState(''); // For selected items reporting
 
   // Delete Warehouse State
@@ -232,33 +231,73 @@ export default function Settings() {
 
     setReportGenerating(true);
     try {
+      // Calculate date range based on scope
+      let calculatedStartDate = null;
+      let calculatedEndDate = null;
+      
+      const now = new Date();
+      switch (reportScope) {
+        case 'date_range':
+          calculatedStartDate = startDate;
+          calculatedEndDate = endDate;
+          break;
+        case 'last_week':
+          calculatedStartDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          calculatedEndDate = now;
+          break;
+        case 'last_month':
+          calculatedStartDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          calculatedEndDate = now;
+          break;
+        case 'last_quarter':
+          calculatedStartDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          calculatedEndDate = now;
+          break;
+        case 'year_to_date':
+          calculatedStartDate = new Date(now.getFullYear(), 0, 1);
+          calculatedEndDate = now;
+          break;
+        case 'current':
+          calculatedStartDate = new Date(now.toDateString());
+          calculatedEndDate = now;
+          break;
+        default:
+          // For 'full', 'selected', 'by_category', 'by_location' - no date restriction
+          break;
+      }
+
       const reportConfig = {
         type: reportType,
         format: reportFormat,
-        warehouseId: currentWarehouse.id, // Always use current warehouse
+        warehouseId: currentWarehouse.id,
+        warehouseName: currentWarehouse.name,
         scope: reportScope,
-        startDate: reportScope === 'date_range' ? startDate : null,
-        endDate: reportScope === 'date_range' ? endDate : null,
-        selectedSkus: reportScope === 'selected' ? selectedSkus.split(',').map(sku => sku.trim()).filter(sku => sku) : null
+        startDate: calculatedStartDate,
+        endDate: calculatedEndDate,
+        selectedSkus: (reportScope === 'selected' || reportScope === 'by_category' || reportScope === 'by_location') 
+          ? selectedSkus.split(',').map(item => item.trim()).filter(item => item) 
+          : null,
+        includeCharts: reportFormat === 'excel',
+        includeMetrics: true,
+        generatedAt: new Date().toISOString(),
+        generatedBy: 'Warehouse Management System'
       };
+
+      console.log('📊 Generating report with config:', reportConfig);
 
       const report = await reportService.generateReport(reportConfig);
       
       switch (reportFormat) {
         case 'excel':
           await reportService.downloadExcelReport(report);
-          showSuccess('📊 Excel report generated and downloaded successfully');
-          break;
-        case 'pdf':
-          await reportService.downloadPdfReport(report);
-          showSuccess('📄 PDF report generated and downloaded successfully');
+          showSuccess(`📊 ${getReportTitle(reportType)} Excel report generated and downloaded successfully`);
           break;
         case 'print':
-          await printService.printSimpleStockMovementReport(report);
-          showSuccess('🖨️ Report sent to printer successfully');
+          await printService.printReport(report);
+          showSuccess(`🖨️ ${getReportTitle(reportType)} sent to printer successfully`);
           break;
         default:
-          showError('Unknown report format');
+          showError('Unknown report format selected');
       }
     } catch (error) {
       showError(`Report generation failed: ${error.message}`);
@@ -393,16 +432,182 @@ export default function Settings() {
     switch (type) {
       case 'stock_movements': 
         return '📦 Complete stock movement history including date, location, put-away operations, pick operations, quantity movements, and closing stock levels for comprehensive tracking.';
-      // case 'inventory_summary': 
-      //   return '📊 Current inventory levels showing real-time stock quantities, bin locations, and storage occupancy across all warehouse areas.';
-      // case 'putaway_summary': 
-      //   return '📥 Put-away operations summary with detailed statistics, success rates, and storage allocation performance metrics.';
-      // case 'pick_summary': 
-      //   return '📤 Pick operations summary including fulfillment rates, pick efficiency, and order completion statistics.';
-      // case 'bin_utilization': 
-      //   return '📈 Bin capacity utilization analysis with storage efficiency metrics, space optimization recommendations, and capacity planning insights.';
+      case 'inventory_summary': 
+        return '📊 Current inventory levels showing real-time stock quantities, bin locations, and storage occupancy across all warehouse areas.';
+      case 'putaway_summary': 
+        return '📥 Put-away operations summary with detailed statistics, success rates, and storage allocation performance metrics.';
+      case 'pick_summary': 
+        return '📤 Pick operations summary including fulfillment rates, pick efficiency, and order completion statistics.';
+      case 'bin_utilization': 
+        return '📈 Bin capacity utilization analysis with storage efficiency metrics, space optimization recommendations, and capacity planning insights.';
+      case 'full_report':
+        return '📋 Comprehensive warehouse report combining all data types: inventory, movements, operations, and utilization in a single detailed document.';
+      case 'operations_history':
+        return '🕐 Historical operations log with complete audit trail of all put-away and pick activities with timestamps and user details.';
+      case 'low_stock_alert':
+        return '⚠️ Low stock analysis identifying SKUs below minimum thresholds with reorder recommendations and supplier information.';
+      case 'abc_analysis':
+        return '📈 ABC analysis categorizing inventory by value and movement frequency for optimized stock management strategies.';
+      case 'storage_efficiency':
+        return '🏗️ Storage space efficiency report with bin occupancy rates, space utilization metrics, and optimization suggestions.';
       default: 
         return 'Select a report type to see detailed description and available data fields.';
+    }
+  };
+
+  const getReportTitle = (type) => {
+    switch (type) {
+      case 'stock_movements': return 'Stock Movement Report';
+      case 'inventory_summary': return 'Inventory Summary Report';
+      case 'putaway_summary': return 'Put-Away Operations Report';
+      case 'pick_summary': return 'Pick Operations Report';
+      case 'bin_utilization': return 'Bin Utilization Report';
+      case 'full_report': return 'Full Warehouse Report';
+      case 'operations_history': return 'Operations History Report';
+      case 'low_stock_alert': return 'Low Stock Alert Report';
+      case 'abc_analysis': return 'ABC Analysis Report';
+      case 'storage_efficiency': return 'Storage Efficiency Report';
+      default: return 'Report';
+    }
+  };
+
+  const getReportFeatures = (type) => {
+    switch (type) {
+      case 'stock_movements':
+        return (
+          <>
+            • <strong>Date & Time:</strong> When each movement occurred<br/>
+            • <strong>Location:</strong> Warehouse, rack, and bin details<br/>
+            • <strong>Put-Away:</strong> Items received and stored<br/>
+            • <strong>Pick List:</strong> Items picked for orders<br/>
+            • <strong>Movement:</strong> Quantity changes and transfers<br/>
+            • <strong>Closing:</strong> Remaining stock after operations
+          </>
+        );
+      case 'inventory_summary':
+        return (
+          <>
+            • <strong>Current Stock:</strong> Real-time inventory levels<br/>
+            • <strong>Bin Locations:</strong> Where items are stored<br/>
+            • <strong>SKU Details:</strong> Product information and variants<br/>
+            • <strong>Storage Status:</strong> Available vs occupied space<br/>
+            • <strong>Last Updated:</strong> When inventory was last modified
+          </>
+        );
+      case 'putaway_summary':
+        return (
+          <>
+            • <strong>Operation Timeline:</strong> Put-away activity dates<br/>
+            • <strong>Success Rates:</strong> Completed vs failed operations<br/>
+            • <strong>Storage Allocation:</strong> Bin assignment efficiency<br/>
+            • <strong>User Performance:</strong> Individual operator metrics<br/>
+            • <strong>Time Analysis:</strong> Average completion times
+          </>
+        );
+      case 'pick_summary':
+        return (
+          <>
+            • <strong>Fulfillment Rates:</strong> Order completion statistics<br/>
+            • <strong>Pick Efficiency:</strong> Time and accuracy metrics<br/>
+            • <strong>FIFO Compliance:</strong> First-in-first-out adherence<br/>
+            • <strong>Error Analysis:</strong> Failed picks and reasons<br/>
+            • <strong>Operator Performance:</strong> Individual pick statistics
+          </>
+        );
+      case 'bin_utilization':
+        return (
+          <>
+            • <strong>Occupancy Rates:</strong> Percentage of bin space used<br/>
+            • <strong>Storage Efficiency:</strong> Space optimization metrics<br/>
+            • <strong>Capacity Planning:</strong> Future storage needs<br/>
+            • <strong>Zone Analysis:</strong> Performance by warehouse area<br/>
+            • <strong>Recommendations:</strong> Space optimization suggestions
+          </>
+        );
+      case 'full_report':
+        return (
+          <>
+            • <strong>Complete Inventory:</strong> All current stock levels<br/>
+            • <strong>All Movements:</strong> Complete transaction history<br/>
+            • <strong>Operations Summary:</strong> All put-away and pick data<br/>
+            • <strong>Utilization Metrics:</strong> Storage and efficiency analysis<br/>
+            • <strong>Performance Insights:</strong> Comprehensive warehouse analytics
+          </>
+        );
+      case 'operations_history':
+        return (
+          <>
+            • <strong>Audit Trail:</strong> Complete operation log<br/>
+            • <strong>User Activities:</strong> Who performed what operations<br/>
+            • <strong>Timestamps:</strong> Exact timing of all activities<br/>
+            • <strong>Change History:</strong> What was modified and when<br/>
+            • <strong>Error Logs:</strong> Failed operations and reasons
+          </>
+        );
+      case 'low_stock_alert':
+        return (
+          <>
+            • <strong>Stock Levels:</strong> Current vs minimum thresholds<br/>
+            • <strong>Reorder Points:</strong> When to restock items<br/>
+            • <strong>Supplier Info:</strong> Vendor contact details<br/>
+            • <strong>Lead Times:</strong> Expected delivery schedules<br/>
+            • <strong>Priority Rankings:</strong> Most critical items first
+          </>
+        );
+      case 'abc_analysis':
+        return (
+          <>
+            • <strong>Category Rankings:</strong> A, B, C classifications<br/>
+            • <strong>Value Analysis:</strong> High to low value items<br/>
+            • <strong>Movement Frequency:</strong> Fast vs slow moving stock<br/>
+            • <strong>Strategic Insights:</strong> Focus area recommendations<br/>
+            • <strong>Resource Allocation:</strong> Where to invest attention
+          </>
+        );
+      case 'storage_efficiency':
+        return (
+          <>
+            • <strong>Space Utilization:</strong> How well space is used<br/>
+            • <strong>Bin Optimization:</strong> Ideal storage configurations<br/>
+            • <strong>Accessibility Analysis:</strong> Ease of item retrieval<br/>
+            • <strong>Layout Efficiency:</strong> Warehouse design insights<br/>
+            • <strong>Improvement Plans:</strong> Actionable optimization steps
+          </>
+        );
+      default:
+        return 'Select a report type to see available features and data fields.';
+    }
+  };
+
+  const getScopeDescription = (scope) => {
+    switch (scope) {
+      case 'full': return 'All Data (Complete Dataset)';
+      case 'date_range': return 'Custom Date Range';
+      case 'current': return 'Current Status Only';
+      case 'last_week': return 'Last 7 Days';
+      case 'last_month': return 'Last 30 Days';
+      case 'last_quarter': return 'Last 3 Months';
+      case 'year_to_date': return 'Year to Date';
+      case 'selected': return 'Selected Items Only';
+      case 'by_category': return 'By Category/Type';
+      case 'by_location': return 'By Location/Zone';
+      default: return scope;
+    }
+  };
+
+  const getScopeDetails = (scope) => {
+    switch (scope) {
+      case 'full': return 'Includes all historical data from warehouse creation to current date. Comprehensive view of all activities.';
+      case 'date_range': return 'Custom date range allows you to focus on specific time periods for targeted analysis.';
+      case 'current': return 'Real-time snapshot of current warehouse status without historical data.';
+      case 'last_week': return 'Focus on recent activity from the last 7 days for short-term analysis.';
+      case 'last_month': return 'Monthly view covering the last 30 days of warehouse operations.';
+      case 'last_quarter': return 'Quarterly analysis covering the last 3 months of activity.';
+      case 'year_to_date': return 'Annual view from January 1st to current date for yearly performance.';
+      case 'selected': return 'Filter data for specific SKUs, perfect for targeted item analysis.';
+      case 'by_category': return 'Group and filter data by item categories or product types.';
+      case 'by_location': return 'Organize data by warehouse zones, racks, or specific storage areas.';
+      default: return 'Select a scope to see detailed information about data coverage.';
     }
   };
 
@@ -630,10 +835,10 @@ export default function Settings() {
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
-                      Stock Movement Reports
+                      📊 Comprehensive Report Generation
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                      Generate comprehensive reports with date, location, putaway, picklist, movement, and closing quantity data
+                      Generate detailed warehouse reports with multiple types and scopes to analyze operations, inventory, and performance
                     </Typography>
                     
                     <Grid container spacing={2}>
@@ -646,10 +851,15 @@ export default function Settings() {
                             onChange={(e) => setReportType(e.target.value)}
                           >
                             <MenuItem value="stock_movements">📦 Stock Movements (Complete)</MenuItem>
-                            {/* <MenuItem value="putaway_summary">📥 Put-Away Operations</MenuItem>
-                            <MenuItem value="pick_summary">📤 Pick Operations</MenuItem>
-                            <MenuItem value="inventory_summary">📊 Current Inventory</MenuItem>
-                            <MenuItem value="bin_utilization">📈 Bin Utilization</MenuItem> */}
+                            <MenuItem value="inventory_summary">📊 Current Inventory Summary</MenuItem>
+                            <MenuItem value="putaway_summary">📥 Put-Away Operations Summary</MenuItem>
+                            <MenuItem value="pick_summary">📤 Pick Operations Summary</MenuItem>
+                            <MenuItem value="bin_utilization">📈 Bin Utilization Analysis</MenuItem>
+                            <MenuItem value="full_report">� Full Warehouse Report (All Data)</MenuItem>
+                            <MenuItem value="operations_history">🕐 Operations History Log</MenuItem>
+                            <MenuItem value="low_stock_alert">⚠️ Low Stock Alert Report</MenuItem>
+                            <MenuItem value="abc_analysis">📈 ABC Analysis Report</MenuItem>
+                            <MenuItem value="storage_efficiency">🏗️ Storage Efficiency Report</MenuItem>
                           </Select>
                         </FormControl>
                       </Grid>
@@ -662,10 +872,16 @@ export default function Settings() {
                             label="Report Scope"
                             onChange={(e) => setReportScope(e.target.value)}
                           >
-                            {/* <MenuItem value="date_range">📅 Between Dates</MenuItem> */}
                             <MenuItem value="full">📋 Full Report (All Data)</MenuItem>
-                            {/* <MenuItem value="current">🕐 Current Status Only</MenuItem>
-                            <MenuItem value="selected">🎯 Selected Items Only</MenuItem> */}
+                            <MenuItem value="date_range">📅 Date Range (Between Dates)</MenuItem>
+                            <MenuItem value="current">� Current Status Only</MenuItem>
+                            <MenuItem value="last_week">📊 Last 7 Days</MenuItem>
+                            <MenuItem value="last_month">� Last 30 Days</MenuItem>
+                            <MenuItem value="last_quarter">📆 Last 3 Months</MenuItem>
+                            <MenuItem value="year_to_date">📅 Year to Date</MenuItem>
+                            <MenuItem value="selected">🎯 Selected Items Only</MenuItem>
+                            <MenuItem value="by_category">🏷️ By Category/Type</MenuItem>
+                            <MenuItem value="by_location">📍 By Location/Zone</MenuItem>
                           </Select>
                         </FormControl>
                       </Grid>
@@ -673,19 +889,23 @@ export default function Settings() {
                       {reportScope === 'date_range' && (
                         <>
                           <Grid item xs={12} md={6}>
-                            <DatePicker
+                            <TextField
+                              fullWidth
+                              type="date"
                               label="Start Date"
-                              value={startDate}
-                              onChange={setStartDate}
-                              renderInput={(params) => <TextField {...params} fullWidth />}
+                              value={startDate ? startDate.toISOString().split('T')[0] : ''}
+                              onChange={(e) => setStartDate(new Date(e.target.value))}
+                              InputLabelProps={{ shrink: true }}
                             />
                           </Grid>
                           <Grid item xs={12} md={6}>
-                            <DatePicker
+                            <TextField
+                              fullWidth
+                              type="date"
                               label="End Date"
-                              value={endDate}
-                              onChange={setEndDate}
-                              renderInput={(params) => <TextField {...params} fullWidth />}
+                              value={endDate ? endDate.toISOString().split('T')[0] : ''}
+                              onChange={(e) => setEndDate(new Date(e.target.value))}
+                              InputLabelProps={{ shrink: true }}
                             />
                           </Grid>
                         </>
@@ -699,7 +919,35 @@ export default function Settings() {
                             placeholder="Enter SKUs separated by commas, e.g., SKU001, SKU002, SKU003"
                             value={selectedSkus}
                             onChange={(e) => setSelectedSkus(e.target.value)}
-                            helperText="Leave empty to include all SKUs"
+                            helperText="Leave empty to include all SKUs. Use * for wildcard matching."
+                            multiline
+                            rows={2}
+                          />
+                        </Grid>
+                      )}
+
+                      {reportScope === 'by_category' && (
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            label="Categories/Types (comma-separated)"
+                            placeholder="Enter categories, e.g., Electronics, Food, Clothing"
+                            value={selectedSkus}
+                            onChange={(e) => setSelectedSkus(e.target.value)}
+                            helperText="Filter by item categories or types"
+                          />
+                        </Grid>
+                      )}
+
+                      {reportScope === 'by_location' && (
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            label="Locations/Zones (comma-separated)"
+                            placeholder="Enter locations, e.g., Zone-A, Rack-001, Ground Floor"
+                            value={selectedSkus}
+                            onChange={(e) => setSelectedSkus(e.target.value)}
+                            helperText="Filter by warehouse zones, racks, or specific locations"
                           />
                         </Grid>
                       )}
@@ -714,15 +962,22 @@ export default function Settings() {
                       <Grid item xs={12}>
                         <Alert severity="info">
                           <Typography variant="subtitle2" gutterBottom>
-                            📊 Stock Movement Report includes:
+                            📊 {getReportTitle(reportType)} includes:
                           </Typography>
                           <Typography variant="body2" component="div">
-                            • <strong>Date & Time:</strong> When each movement occurred<br/>
-                            • <strong>Location:</strong> Warehouse, rack, and bin details<br/>
-                            • <strong>Put-Away:</strong> Items received and stored<br/>
-                            • <strong>Pick List:</strong> Items picked for orders<br/>
-                            • <strong>Movement:</strong> Quantity changes and transfers<br/>
-                            • <strong>Closing:</strong> Remaining stock after operations
+                            {getReportFeatures(reportType)}
+                          </Typography>
+                        </Alert>
+                      </Grid>
+
+                      {/* Scope Information */}
+                      <Grid item xs={12}>
+                        <Alert severity="success">
+                          <Typography variant="subtitle2" gutterBottom>
+                            🎯 Current Scope: {getScopeDescription(reportScope)}
+                          </Typography>
+                          <Typography variant="body2">
+                            {getScopeDetails(reportScope)}
                           </Typography>
                         </Alert>
                       </Grid>
@@ -742,31 +997,40 @@ export default function Settings() {
                     <ButtonGroup orientation="vertical" fullWidth sx={{ mb: 2 }}>
                       <Button
                         variant={reportFormat === 'excel' ? 'contained' : 'outlined'}
-                        startIcon={<ExcelIcon />}
+                        startIcon={<ExportIcon />}
                         onClick={() => setReportFormat('excel')}
                         color={reportFormat === 'excel' ? 'primary' : 'inherit'}
                       >
-                        📊 Excel Spreadsheet
+                        📊 Excel Spreadsheet (.xlsx)
                       </Button>
-                      {/* <Button
-                        variant={reportFormat === 'pdf' ? 'contained' : 'outlined'}
-                        startIcon={<PdfIcon />}
-                        onClick={() => setReportFormat('pdf')}
-                        color={reportFormat === 'pdf' ? 'primary' : 'inherit'}
-                      >
-                        📄 PDF Document
-                      </Button> */}
                       <Button
                         variant={reportFormat === 'print' ? 'contained' : 'outlined'}
                         startIcon={<PrintIcon />}
                         onClick={() => setReportFormat('print')}
                         color={reportFormat === 'print' ? 'primary' : 'inherit'}
                       >
-                        🖨️ Print Report
+                        🖨️ Print Report (Direct)
                       </Button>
                     </ButtonGroup>
 
                     <Divider sx={{ my: 2 }} />
+
+                    {/* Format-specific options */}
+                    {reportFormat === 'excel' && (
+                      <Alert severity="info" sx={{ mb: 2 }}>
+                        <Typography variant="body2">
+                          Excel format includes charts, formatting, and multiple sheets for comprehensive analysis.
+                        </Typography>
+                      </Alert>
+                    )}
+
+                    {reportFormat === 'print' && (
+                      <Alert severity="info" sx={{ mb: 2 }}>
+                        <Typography variant="body2">
+                          Print option will send the report directly to your default printer with optimized formatting.
+                        </Typography>
+                      </Alert>
+                    )}
 
                     <Button
                       variant="contained"
@@ -792,6 +1056,18 @@ export default function Settings() {
                         </Typography>
                       </Box>
                     )}
+
+                    {/* Quick stats if available */}
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" gutterBottom>
+                      📈 Quick Stats
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Selected warehouse: <strong>{currentWarehouse?.name}</strong><br/>
+                      Report type: <strong>{getReportTitle(reportType)}</strong><br/>
+                      Data scope: <strong>{getScopeDescription(reportScope)}</strong><br/>
+                      Output format: <strong>{reportFormat.toUpperCase()}</strong>
+                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>
