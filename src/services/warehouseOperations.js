@@ -593,17 +593,9 @@ export const warehouseOperations = {
         let binSKUInfo = null;
 
         // Check if this bin contains the SKU we're looking for
-        if (bin.sku === sku && bin.currentQty > 0) {
-          // Primary SKU in bin
-          availableQuantity = parseInt(bin.currentQty) || 0;
-          binSKUInfo = {
-            sku: bin.sku,
-            lotNumber: bin.lotNumber,
-            expiryDate: bin.expiryDate,
-            isMixed: false
-          };
-        } else if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
-          // Check mixed contents for our SKU
+        if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
+          // CRITICAL FIX: Always check mixed contents first, even for primary SKU
+          // This prevents the bug where mixed bins are treated as pure bins
           const matchingContent = bin.mixedContents.find(content => content.sku === sku);
           if (matchingContent && matchingContent.quantity > 0) {
             availableQuantity = parseInt(matchingContent.quantity) || 0;
@@ -619,6 +611,15 @@ export const warehouseOperations = {
             // Log mixed bin details for debugging
             console.log(`🔍 Found SKU ${sku} in mixed bin ${bin.code}: ${availableQuantity} units (Primary: ${bin.sku}, Contains: ${binSKUInfo.allMixedSKUs})`);
           }
+        } else if (bin.sku === sku && bin.currentQty > 0) {
+          // Only treat as pure bin if no mixed contents exist
+          availableQuantity = parseInt(bin.currentQty) || 0;
+          binSKUInfo = {
+            sku: bin.sku,
+            lotNumber: bin.lotNumber,
+            expiryDate: bin.expiryDate,
+            isMixed: false
+          };
         }
 
         if (availableQuantity > 0 && binSKUInfo) {
@@ -909,6 +910,45 @@ export const warehouseOperations = {
       const binUpdates = [];
       const auditLog = [];
 
+      // CRITICAL FIX: Pre-validate all bins before starting any picks
+      // This prevents the race condition where early picks affect later picks
+      console.log('🔍 Pre-validating all bins before execution to prevent inventory inconsistencies...');
+      const binValidationResults = [];
+      
+      for (const pickedItem of pickedItems) {
+        const { binId, quantity, sku } = pickedItem;
+        const bin = await warehouseService.getBin(warehouseId, binId);
+        
+        if (!bin) {
+          throw new Error(`VALIDATION FAILED: Bin ${binId} not found`);
+        }
+        
+        let availableQuantityForSKU = 0;
+        
+        // Check if this is a primary SKU bin or mixed bin
+        if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
+          const matchingContent = bin.mixedContents.find(content => content.sku === sku);
+          if (matchingContent) {
+            availableQuantityForSKU = parseInt(matchingContent.quantity) || 0;
+          }
+        } else if (bin.sku === sku) {
+          availableQuantityForSKU = parseInt(bin.currentQty) || 0;
+        }
+        
+        if (availableQuantityForSKU < quantity) {
+          throw new Error(`VALIDATION FAILED: Insufficient quantity of SKU ${sku} in bin ${bin.code}. Available: ${availableQuantityForSKU}, Requested: ${quantity}. This indicates a planning vs execution race condition - please recalculate pick plans.`);
+        }
+        
+        binValidationResults.push({
+          binId,
+          bin,
+          availableQuantityForSKU,
+          validated: true
+        });
+      }
+      
+      console.log(`✅ All ${binValidationResults.length} bins pre-validated successfully`);
+
       // Process each picked item with FIFO validation
       for (let i = 0; i < pickedItems.length; i++) {
         const pickedItem = pickedItems[i];
@@ -916,7 +956,7 @@ export const warehouseOperations = {
         
         console.log(`📦 Processing pick ${i + 1}/${pickedItems.length}: ${quantity} units from bin ${binId}`);
 
-        // Get current bin state
+        // Get current bin state (refresh to get latest data)
         const bin = await warehouseService.getBin(warehouseId, binId);
         if (!bin) {
           throw new Error(`Bin ${binId} not found`);
