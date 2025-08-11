@@ -74,12 +74,18 @@ export class ReportService {
       const movements = [];
       const warehouseId = config.warehouseId;
       
-      // SIMPLIFIED: Track inventory levels by SKU and physical bin location
+      // Track inventory levels by SKU and physical bin location
       const inventoryTracker = new Map(); // key: "SKU_BinId" -> current quantity
 
       if (!warehouseId) {
         throw new Error('Warehouse ID is required for generating reports');
       }
+
+      // Get current bin status for metadata and closing quantity validation
+      const binsRef = collection(db, 'WHT', warehouseId, 'bins');
+      const binsSnapshot = await getDocs(binsRef);
+      const bins = binsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const binMap = new Map(bins.map(bin => [bin.id, bin]));
 
       // Get operation history in chronological order (oldest first)
       const historyRef = collection(db, 'WHT', warehouseId, 'operationHistory');
@@ -92,16 +98,83 @@ export class ReportService {
           where('timestamp', '<=', config.endDate.toISOString()),
           orderBy('timestamp', 'asc')
         );
+        
+        // For date-filtered reports, initialize inventory tracker with the state 
+        // BEFORE the start date by processing earlier operations
+        console.log('📅 Date range filtering active, building opening inventory state...');
+        
+        const preHistoryQuery = query(
+          historyRef,
+          where('timestamp', '<', config.startDate.toISOString()),
+          orderBy('timestamp', 'asc') // Chronological order to build up state
+        );
+        
+        const preHistorySnapshot = await getDocs(preHistoryQuery);
+        const preHistoryItems = preHistorySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Build up inventory state from operations before the start date
+        for (const item of preHistoryItems) {
+          if (item.executionDetails && item.executionDetails.items) {
+            for (const execItem of item.executionDetails.items) {
+              const sku = execItem.barcode || execItem.sku;
+              
+              // Skip if SKU filtering is active and this SKU is not selected
+              if (config.selectedSkus && config.selectedSkus.length > 0) {
+                if (!config.selectedSkus.includes(sku)) {
+                  continue;
+                }
+              }
+
+              // Handle putaway operations with allocation plan
+              if (item.operationType === 'putaway' && execItem.allocationPlan && Array.isArray(execItem.allocationPlan)) {
+                execItem.allocationPlan.forEach(allocation => {
+                  const quantity = parseInt(allocation.allocatedQuantity) || 0;
+                  const inventoryKey = `${sku}_${allocation.binId || 'UNKNOWN'}`;
+                  
+                  // Apply the putaway operation (add quantity)
+                  const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                  inventoryTracker.set(inventoryKey, currentLevel + quantity);
+                });
+              }
+              // Handle pick operations with picked bins
+              else if (item.operationType === 'pick' && execItem.pickedBins && Array.isArray(execItem.pickedBins)) {
+                execItem.pickedBins.forEach(pickedBin => {
+                  const quantity = parseInt(pickedBin.quantity) || 0;
+                  const inventoryKey = `${sku}_${pickedBin.binId || 'UNKNOWN'}`;
+                  
+                  // Apply the pick operation (subtract quantity)
+                  const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                  inventoryTracker.set(inventoryKey, Math.max(0, currentLevel - quantity));
+                });
+              }
+              // Fallback for legacy operations
+              else {
+                let quantity = 0;
+                if (item.operationType === 'putaway') {
+                  quantity = parseInt(execItem.quantity) || 0;
+                  // Apply putaway (add)
+                  const inventoryKey = `${sku}_${execItem.binId || 'UNKNOWN'}`;
+                  const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                  inventoryTracker.set(inventoryKey, currentLevel + quantity);
+                } else if (item.operationType === 'pick') {
+                  quantity = parseInt(execItem.pickedQty || execItem.quantity) || 0;
+                  // Apply pick (subtract)
+                  const inventoryKey = `${sku}_${execItem.binId || 'UNKNOWN'}`;
+                  const currentLevel = inventoryTracker.get(inventoryKey) || 0;
+                  inventoryTracker.set(inventoryKey, Math.max(0, currentLevel - quantity));
+                }
+              }
+            }
+          }
+        }
+        console.log(`📅 Built opening inventory state from ${preHistoryItems.length} pre-period operations`);
+      } else {
+        // For full reports, start with empty inventory (all operations will be processed)
+        console.log('📊 Full report mode - starting with empty inventory tracker');
       }
 
       const historySnapshot = await getDocs(historyQuery);
       const historyItems = historySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-      // Get current bin status for closing quantities
-      const binsRef = collection(db, 'WHT', warehouseId, 'bins');
-      const binsSnapshot = await getDocs(binsRef);
-      const bins = binsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const binMap = new Map(bins.map(bin => [bin.id, bin]));
 
       // Get warehouse details for better location information
       const warehouseRef = doc(db, 'WHT', warehouseId);
@@ -147,6 +220,7 @@ export class ReportService {
                 
                 console.log(`📦 PUT-AWAY (from allocation): ${sku} in ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
                 
+                // Create simplified flat record: Barcode, Location, Quantity, Operation
                 movements.push({
                   date: new Date(item.timestamp).toLocaleDateString(),
                   time: new Date(item.timestamp).toLocaleTimeString(),
@@ -158,6 +232,7 @@ export class ReportService {
                   binCode: binCode,
                   binId: allocation.binId || 'Unknown',
                   status: execItem.status || 'Completed',
+                  // Keep legacy fields for compatibility but focus on simplified format
                   opening: openingQty,
                   putaway: quantity,
                   pick: 0,
@@ -192,6 +267,7 @@ export class ReportService {
                 
                 console.log(`📦 PICK (from pickedBins): ${sku} from ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
                 
+                // Create simplified flat record: Barcode, Location, Quantity, Operation
                 movements.push({
                   date: new Date(item.timestamp).toLocaleDateString(),
                   time: new Date(item.timestamp).toLocaleTimeString(),
@@ -203,6 +279,7 @@ export class ReportService {
                   binCode: binCode,
                   binId: pickedBin.binId || 'Unknown',
                   status: execItem.status || 'Completed',
+                  // Keep legacy fields for compatibility but focus on simplified format
                   opening: openingQty,
                   putaway: 0,
                   pick: quantity,
@@ -264,6 +341,7 @@ export class ReportService {
               
               console.log(`📦 ${item.operationType.toUpperCase()} (legacy): ${sku} in ${binCode}, Opening: ${openingQty}, Qty: ${quantity}, Closing: ${closingQty}`);
               
+              // Create simplified flat record: Barcode, Location, Quantity, Operation
               movements.push({
                 date: new Date(item.timestamp).toLocaleDateString(),
                 time: new Date(item.timestamp).toLocaleTimeString(),
@@ -275,6 +353,7 @@ export class ReportService {
                 binCode: binCode,
                 binId: execItem.binId || 'Unknown',
                 status: execItem.status || 'Unknown',
+                // Keep legacy fields for compatibility but focus on simplified format
                 opening: openingQty,
                 putaway: item.operationType === 'putaway' ? quantity : 0,
                 pick: item.operationType === 'pick' ? quantity : 0,
@@ -1021,19 +1100,12 @@ export class ReportService {
 
     switch (type) {
       case this.reportTypes.STOCK_MOVEMENTS:
-        // Make a clean copy for Excel that focuses on the right fields
+        // Make a clean copy for Excel that uses simplified format
         const cleanMovements = data.movements.map(m => ({
-          Date: m.date,
-          Time: m.time,
+          Barcode: m.sku,
           Location: m.location,
-          'Opening Qty': m.opening,
-          SKU: m.sku,
-          'Put-Away': m.putaway,
-          Pick: m.pick,
-          Movement: m.movement,
-          'Closing Qty': m.closing,
-          'Bin Code': m.binCode,
-          Status: m.status
+          Quantity: m.quantity,
+          Operation: m.operationType
         }));
         return XLSX.utils.json_to_sheet(cleanMovements);
       case this.reportTypes.INVENTORY_SUMMARY:
@@ -1078,9 +1150,9 @@ export class ReportService {
     switch (type) {
       case this.reportTypes.STOCK_MOVEMENTS:
         return {
-          head: [['Date', 'Time', 'Location', 'Opening Qty', 'SKU', 'Put-Away', 'Pick', 'Movement', 'Closing Qty', 'Bin Code', 'Status']],
+          head: [['Barcode', 'Location', 'Quantity', 'Operation']],
           body: data.movements.slice(0, 50).map(m => [
-            m.date, m.time, m.location, m.opening, m.sku, m.putaway, m.pick, m.movement, m.closing, m.binCode, m.status
+            m.sku, m.location, m.quantity, m.operationType
           ])
         };
       case this.reportTypes.INVENTORY_SUMMARY:

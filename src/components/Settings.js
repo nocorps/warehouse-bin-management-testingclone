@@ -434,22 +434,22 @@ export default function Settings() {
         return '📦 Complete stock movement history including date, location, put-away operations, pick operations, quantity movements, and closing stock levels for comprehensive tracking.';
       case 'inventory_summary': 
         return '📊 Current inventory levels showing real-time stock quantities, bin locations, and storage occupancy across all warehouse areas.';
-      case 'putaway_summary': 
-        return '📥 Put-away operations summary with detailed statistics, success rates, and storage allocation performance metrics.';
-      case 'pick_summary': 
-        return '📤 Pick operations summary including fulfillment rates, pick efficiency, and order completion statistics.';
-      case 'bin_utilization': 
-        return '📈 Bin capacity utilization analysis with storage efficiency metrics, space optimization recommendations, and capacity planning insights.';
-      case 'full_report':
-        return '📋 Comprehensive warehouse report combining all data types: inventory, movements, operations, and utilization in a single detailed document.';
-      case 'operations_history':
-        return '🕐 Historical operations log with complete audit trail of all put-away and pick activities with timestamps and user details.';
-      case 'low_stock_alert':
-        return '⚠️ Low stock analysis identifying SKUs below minimum thresholds with reorder recommendations and supplier information.';
-      case 'abc_analysis':
-        return '📈 ABC analysis categorizing inventory by value and movement frequency for optimized stock management strategies.';
-      case 'storage_efficiency':
-        return '🏗️ Storage space efficiency report with bin occupancy rates, space utilization metrics, and optimization suggestions.';
+      // case 'putaway_summary': 
+      //   return '📥 Put-away operations summary with detailed statistics, success rates, and storage allocation performance metrics.';
+      // case 'pick_summary': 
+      //   return '📤 Pick operations summary including fulfillment rates, pick efficiency, and order completion statistics.';
+      // case 'bin_utilization': 
+      //   return '📈 Bin capacity utilization analysis with storage efficiency metrics, space optimization recommendations, and capacity planning insights.';
+      // case 'full_report':
+      //   return '📋 Comprehensive warehouse report combining all data types: inventory, movements, operations, and utilization in a single detailed document.';
+      // case 'operations_history':
+      //   return '🕐 Historical operations log with complete audit trail of all put-away and pick activities with timestamps and user details.';
+      // case 'low_stock_alert':
+      //   return '⚠️ Low stock analysis identifying SKUs below minimum thresholds with reorder recommendations and supplier information.';
+      // case 'abc_analysis':
+      //   return '📈 ABC analysis categorizing inventory by value and movement frequency for optimized stock management strategies.';
+      // case 'storage_efficiency':
+      //   return '🏗️ Storage space efficiency report with bin occupancy rates, space utilization metrics, and optimization suggestions.';
       default: 
         return 'Select a report type to see detailed description and available data fields.';
     }
@@ -476,12 +476,11 @@ export default function Settings() {
       case 'stock_movements':
         return (
           <>
-            • <strong>Date & Time:</strong> When each movement occurred<br/>
-            • <strong>Location:</strong> Warehouse, rack, and bin details<br/>
-            • <strong>Put-Away:</strong> Items received and stored<br/>
-            • <strong>Pick List:</strong> Items picked for orders<br/>
-            • <strong>Movement:</strong> Quantity changes and transfers<br/>
-            • <strong>Closing:</strong> Remaining stock after operations
+            • <strong>Barcode:</strong> SKU/Product identifier<br/>
+            • <strong>Location:</strong> Specific bin location<br/>
+            • <strong>Quantity:</strong> Amount moved or transferred<br/>
+            • <strong>Operation:</strong> Put-Away or Pick transaction<br/>
+            <br/><em>Simplified transaction log format - one row per operation</em>
           </>
         );
       case 'inventory_summary':
@@ -583,14 +582,14 @@ export default function Settings() {
     switch (scope) {
       case 'full': return 'All Data (Complete Dataset)';
       case 'date_range': return 'Custom Date Range';
-      case 'current': return 'Current Status Only';
-      case 'last_week': return 'Last 7 Days';
-      case 'last_month': return 'Last 30 Days';
-      case 'last_quarter': return 'Last 3 Months';
-      case 'year_to_date': return 'Year to Date';
-      case 'selected': return 'Selected Items Only';
-      case 'by_category': return 'By Category/Type';
-      case 'by_location': return 'By Location/Zone';
+      // case 'current': return 'Current Status Only';
+      // case 'last_week': return 'Last 7 Days';
+      // case 'last_month': return 'Last 30 Days';
+      // case 'last_quarter': return 'Last 3 Months';
+      // case 'year_to_date': return 'Year to Date';
+      // case 'selected': return 'Selected Items Only';
+      // case 'by_category': return 'By Category/Type';
+      // case 'by_location': return 'By Location/Zone';
       default: return scope;
     }
   };
@@ -852,14 +851,14 @@ export default function Settings() {
                           >
                             <MenuItem value="stock_movements">📦 Stock Movements (Complete)</MenuItem>
                             <MenuItem value="inventory_summary">📊 Current Inventory Summary</MenuItem>
-                            <MenuItem value="putaway_summary">📥 Put-Away Operations Summary</MenuItem>
+                            {/* <MenuItem value="putaway_summary">📥 Put-Away Operations Summary</MenuItem>
                             <MenuItem value="pick_summary">📤 Pick Operations Summary</MenuItem>
                             <MenuItem value="bin_utilization">📈 Bin Utilization Analysis</MenuItem>
                             <MenuItem value="full_report">� Full Warehouse Report (All Data)</MenuItem>
                             <MenuItem value="operations_history">🕐 Operations History Log</MenuItem>
                             <MenuItem value="low_stock_alert">⚠️ Low Stock Alert Report</MenuItem>
                             <MenuItem value="abc_analysis">📈 ABC Analysis Report</MenuItem>
-                            <MenuItem value="storage_efficiency">🏗️ Storage Efficiency Report</MenuItem>
+                            <MenuItem value="storage_efficiency">🏗️ Storage Efficiency Report</MenuItem> */}
                           </Select>
                         </FormControl>
                       </Grid>
@@ -874,14 +873,14 @@ export default function Settings() {
                           >
                             <MenuItem value="full">📋 Full Report (All Data)</MenuItem>
                             <MenuItem value="date_range">📅 Date Range (Between Dates)</MenuItem>
-                            <MenuItem value="current">� Current Status Only</MenuItem>
+                            {/* <MenuItem value="current">� Current Status Only</MenuItem>
                             <MenuItem value="last_week">📊 Last 7 Days</MenuItem>
                             <MenuItem value="last_month">� Last 30 Days</MenuItem>
                             <MenuItem value="last_quarter">📆 Last 3 Months</MenuItem>
                             <MenuItem value="year_to_date">📅 Year to Date</MenuItem>
                             <MenuItem value="selected">🎯 Selected Items Only</MenuItem>
                             <MenuItem value="by_category">🏷️ By Category/Type</MenuItem>
-                            <MenuItem value="by_location">📍 By Location/Zone</MenuItem>
+                            <MenuItem value="by_location">📍 By Location/Zone</MenuItem> */}
                           </Select>
                         </FormControl>
                       </Grid>

@@ -738,34 +738,20 @@ export class PrintService {
           <table class="items-table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Time</th>
+                <th>Barcode</th>
                 <th>Location</th>
-                <th>Opening Qty</th>
-                <th>SKU</th>
-                <th>Put-Away</th>
-                <th>Pick</th>
-                <th>Movement</th>
-                <th>Closing Qty</th>
-                <th>Bin Code</th>
-                <th>Status</th>
+                <th>Quantity</th>
+                <th>Operation</th>
               </tr>
             </thead>
             <tbody>
               ${movements.slice(0, 100).map(movement => `
                 <tr>
-                  <td>${movement.date}</td>
-                  <td>${movement.time}</td>
-                  <td><strong>${movement.location}</strong></td>
-                  <td>${movement.opening}</td>
-                  <td>${movement.sku}</td>
-                  <td>${movement.putaway}</td>
-                  <td>${movement.pick}</td>
-                  <td>${movement.movement}</td>
-                  <td>${movement.closing}</td>
-                  <td><strong>${movement.binCode}</strong></td>
+                  <td><strong>${movement.sku}</strong></td>
+                  <td>${movement.location}</td>
+                  <td>${movement.quantity}</td>
                   <td>
-                    <span class="status ${movement.status.toLowerCase()}">${movement.status}</span>
+                    <span class="operation-type ${movement.operationType.toLowerCase().replace('-', '')}">${movement.operationType}</span>
                   </td>
                 </tr>
               `).join('')}
