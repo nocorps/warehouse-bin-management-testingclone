@@ -831,7 +831,7 @@ export default function WarehouseSelector({ onWarehouseSelected }) {
         </Dialog>
 
         {/* Debug Section - Remove in production */}
-        {process.env.NODE_ENV === 'development' && (
+        {/* {process.env.NODE_ENV === 'development' && (
           <Box sx={{ mb: 4, textAlign: 'center' }}>
             <Card sx={{ 
               background: 'rgba(255, 193, 7, 0.1)',
@@ -869,7 +869,7 @@ export default function WarehouseSelector({ onWarehouseSelected }) {
               </CardContent>
             </Card>
           </Box>
-        )}
+        )} */}
       </Box>
     </Box>
   );

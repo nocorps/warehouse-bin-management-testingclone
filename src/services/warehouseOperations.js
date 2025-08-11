@@ -3,6 +3,157 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase.js';
 
 export const warehouseOperations = {
+  // Track active pick operations to prevent concurrent bin changes
+  activePickOperations: new Map(), // warehouseId -> Map(binId -> { operationId, timestamp })
+  pickOperationTimeouts: new Map(), // warehouseId -> timeoutId for cleanup
+
+  /**
+   * Lock bins for picking to prevent inventory moves during operation
+   */
+  async lockBinsForPicking(warehouseId, binIds, operationId) {
+    console.log(`🔒 Locking bins for pick operation: ${binIds.length} bins`, { operationId, binIds });
+    
+    if (!this.activePickOperations.has(warehouseId)) {
+      this.activePickOperations.set(warehouseId, new Map());
+    }
+    
+    const lockedBins = this.activePickOperations.get(warehouseId);
+    
+    // Check if any bins are already locked by a different operation
+    const alreadyLocked = binIds.filter(binId => {
+      const lockInfo = lockedBins.get(binId);
+      return lockInfo && lockInfo.operationId !== operationId;
+    });
+    
+    if (alreadyLocked.length > 0) {
+      throw new Error(`Cannot start pick operation - bins already locked for picking: ${alreadyLocked.join(', ')}`);
+    }
+    
+    // Lock all bins with operation ID and timestamp
+    const timestamp = Date.now();
+    binIds.forEach(binId => {
+      lockedBins.set(binId, { operationId, timestamp });
+    });
+    
+    // Set auto-cleanup timeout (10 minutes)
+    this.setPickOperationTimeout(warehouseId, operationId);
+    
+    console.log(`✅ Successfully locked ${binIds.length} bins for picking`, { warehouseId, operationId });
+  },
+
+  /**
+   * Release bin locks after pick operation completes
+   */
+  async releaseBinsFromPicking(warehouseId, binIds, operationId) {
+    console.log(`🔓 Releasing bins from pick operation: ${binIds.length} bins`, { operationId, binIds });
+    
+    if (!this.activePickOperations.has(warehouseId)) {
+      return;
+    }
+    
+    const lockedBins = this.activePickOperations.get(warehouseId);
+    
+    // Release all bins
+    binIds.forEach(binId => lockedBins.delete(binId));
+    
+    // Clear timeout if no more locked bins
+    if (lockedBins.size === 0) {
+      this.clearPickOperationTimeout(warehouseId);
+    }
+    
+    console.log(`✅ Successfully released ${binIds.length} bins from picking`, { warehouseId, operationId });
+  },
+
+  /**
+   * Check if bins are locked for picking
+   */
+  areBinsLockedForPicking(warehouseId, binIds) {
+    if (!this.activePickOperations.has(warehouseId)) {
+      return { locked: false, lockedBins: [], operationId: null };
+    }
+    
+    const lockedBins = this.activePickOperations.get(warehouseId);
+    const lockedFromList = binIds.filter(binId => lockedBins.has(binId));
+    
+    // Get the operation ID from the first locked bin (all should have same operation ID)
+    let operationId = null;
+    if (lockedFromList.length > 0) {
+      const firstLockedBin = lockedBins.get(lockedFromList[0]);
+      operationId = firstLockedBin ? firstLockedBin.operationId : null;
+    }
+    
+    return {
+      locked: lockedFromList.length > 0,
+      lockedBins: lockedFromList,
+      operationId,
+      totalLocked: lockedBins.size
+    };
+  },
+
+  /**
+   * Set timeout for automatic lock cleanup
+   */
+  setPickOperationTimeout(warehouseId, operationId) {
+    // Clear existing timeout
+    this.clearPickOperationTimeout(warehouseId);
+    
+    // Set new timeout (10 minutes = 600,000 ms)
+    const timeoutId = setTimeout(() => {
+      console.warn(`⚠️ Auto-releasing pick locks due to timeout for warehouse ${warehouseId}, operation ${operationId}`);
+      this.forceReleaseAllPickLocks(warehouseId);
+    }, 600000);
+    
+    this.pickOperationTimeouts.set(warehouseId, timeoutId);
+  },
+
+  /**
+   * Clear pick operation timeout
+   */
+  clearPickOperationTimeout(warehouseId) {
+    const timeoutId = this.pickOperationTimeouts.get(warehouseId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.pickOperationTimeouts.delete(warehouseId);
+    }
+  },
+
+  /**
+   * Force release all pick locks for a warehouse (emergency cleanup)
+   */
+  forceReleaseAllPickLocks(warehouseId) {
+    console.warn(`🚨 Force releasing ALL pick locks for warehouse ${warehouseId}`);
+    
+    if (this.activePickOperations.has(warehouseId)) {
+      const lockedBins = this.activePickOperations.get(warehouseId);
+      console.warn(`🚨 Releasing ${lockedBins.size} locked bins:`, Array.from(lockedBins));
+      this.activePickOperations.delete(warehouseId);
+    }
+    
+    this.clearPickOperationTimeout(warehouseId);
+  },
+
+  /**
+   * Validate bin operations against pick locks
+   */
+  validateBinOperationAgainstPickLocks(warehouseId, binIds, operationType = 'update', allowedOperationId = null) {
+    const lockStatus = this.areBinsLockedForPicking(warehouseId, binIds);
+    
+    if (lockStatus.locked) {
+      // Check if the current operation is the one that owns the lock
+      if (allowedOperationId && lockStatus.operationId === allowedOperationId) {
+        // This is the owning operation, allow it to proceed
+        console.log(`🔓 Allowing ${operationType} operation for bins [${binIds.join(', ')}] - owned by operation ${allowedOperationId}`);
+        return;
+      }
+      
+      throw new Error(
+        `Cannot ${operationType} bins - currently locked for active pick operation. ` +
+        `Locked bins: ${lockStatus.lockedBins.join(', ')}. ` +
+        `Please wait for pick operation to complete or contact system administrator.`
+      );
+    }
+  },
+
   /**
    * Smart bin allocation algorithm for put-away operations
    */
@@ -230,6 +381,9 @@ export const warehouseOperations = {
    */
   async executePutAway(warehouseId, taskId, actualBinId, actualQuantity, existingTask = null) {
     try {
+      // STEP 1: Validate that the target bin is not locked for picking
+      this.validateBinOperationAgainstPickLocks(warehouseId, [actualBinId], 'put-away to');
+      
       // Use existing task if provided, otherwise fetch it
       let task = existingTask;
       if (!task) {
@@ -275,12 +429,18 @@ export const warehouseOperations = {
       if (currentQty === 0) {
         allocationType = 'NEW_PLACEMENT';
         allocationReason = `New placement in empty bin - Clean storage for ${newQuantity} units`;
-      } else if (bin.sku === task.sku) {
+      } else if (bin.sku === task.sku && !bin.mixedContents) {
+        // Same SKU consolidation only if bin doesn't have mixed contents
         allocationType = 'SAME_SKU_CONSOLIDATION';
         allocationReason = `Same SKU consolidation - Adding ${newQuantity} units to existing ${currentQty} units`;
       } else {
+        // Either different SKU or same SKU but bin has mixed contents
         allocationType = 'MIXED_SKU_STORAGE';
-        allocationReason = `Mixed storage - Adding ${task.sku} (${newQuantity} units) to bin containing ${bin.sku}`;
+        if (bin.sku === task.sku && bin.mixedContents) {
+          allocationReason = `Mixed storage - Adding ${task.sku} (${newQuantity} units) to mixed bin (same as primary SKU)`;
+        } else {
+          allocationReason = `Mixed storage - Adding ${task.sku} (${newQuantity} units) to bin containing ${bin.sku}`;
+        }
       }
 
       // Create detailed audit log entry
@@ -452,8 +612,12 @@ export const warehouseOperations = {
               lotNumber: matchingContent.lotNumber,
               expiryDate: matchingContent.expiryDate,
               isMixed: true,
-              originalBinSKU: bin.sku
+              originalBinSKU: bin.sku,
+              allMixedSKUs: bin.mixedContents.map(c => c.sku).join(', ')
             };
+            
+            // Log mixed bin details for debugging
+            console.log(`🔍 Found SKU ${sku} in mixed bin ${bin.code}: ${availableQuantity} units (Primary: ${bin.sku}, Contains: ${binSKUInfo.allMixedSKUs})`);
           }
         }
 
@@ -560,7 +724,7 @@ export const warehouseOperations = {
           remainingQuantity -= pickQuantity;
           totalPicked += pickQuantity;
           
-          console.log(`✓ FIFO Pick Plan: Bin ${bin.code} - Pick ${pickQuantity}/${bin.availableQuantity} (${bin.skuInfo.isMixed ? 'Mixed' : 'Pure'} bin), Remaining needed: ${remainingQuantity}`);
+          console.log(`✓ FIFO Pick Plan: Bin ${bin.code} - Pick ${pickQuantity}/${bin.availableQuantity} (${bin.skuInfo.isMixed ? `Mixed bin (Primary: ${bin.skuInfo.originalBinSKU}, Contains: ${bin.skuInfo.allMixedSKUs || 'Unknown'})` : 'Pure bin'}), Remaining needed: ${remainingQuantity}`);
         }
       }
 
@@ -616,7 +780,8 @@ export const warehouseOperations = {
     }
     
     if (skuInfo.isMixed) {
-      reasons.push(`Mixed bin (Primary: ${skuInfo.originalBinSKU})`);
+      const mixedInfo = skuInfo.allMixedSKUs ? `, Contains: ${skuInfo.allMixedSKUs}` : '';
+      reasons.push(`Mixed bin (Primary: ${skuInfo.originalBinSKU}${mixedInfo})`);
     }
     
     reasons.push(`Grid ${bin.shelfLevel || 1}`);
@@ -707,11 +872,23 @@ export const warehouseOperations = {
   },
 
   /**
-   * Execute pick operation with enhanced FIFO logic
+   * Execute pick operation with enhanced FIFO logic and bin locking
    */
   async executePick(warehouseId, taskId, pickedItems) {
+    // Generate unique operation ID for tracking
+    const operationId = `pick-${taskId}-${Date.now()}`;
+    const binIds = [...new Set(pickedItems.map(item => item.binId))]; // Unique bin IDs
+    
     try {
-      console.log('🔄 Executing pick operation with FIFO logic:', { taskId, pickedItems: pickedItems.length });
+      console.log('🔄 Executing pick operation with FIFO logic and bin locking:', { 
+        taskId, 
+        operationId,
+        pickedItems: pickedItems.length,
+        uniqueBins: binIds.length
+      });
+      
+      // STEP 1: Lock all bins involved in this pick operation
+      await this.lockBinsForPicking(warehouseId, binIds, operationId);
       
       // Check if this is a temporary task ID (for Excel imports)
       const isTemporaryTask = taskId.startsWith('excel-pick-');
@@ -751,17 +928,17 @@ export const warehouseOperations = {
         let skuLocation = null;
 
         // Check if this is a primary SKU bin or mixed bin
-        if (bin.sku === sku) {
-          // Primary SKU in bin
-          availableQuantityForSKU = currentQty;
-          skuLocation = 'primary';
-        } else if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
-          // Check mixed contents for our SKU
+        if (bin.mixedContents && Array.isArray(bin.mixedContents)) {
+          // For mixed bins, always check mixed contents regardless of primary SKU
           const matchingContent = bin.mixedContents.find(content => content.sku === sku);
           if (matchingContent) {
             availableQuantityForSKU = parseInt(matchingContent.quantity) || 0;
             skuLocation = 'mixed';
           }
+        } else if (bin.sku === sku) {
+          // Simple bin with primary SKU
+          availableQuantityForSKU = currentQty;
+          skuLocation = 'primary';
         }
 
         if (availableQuantityForSKU === 0) {
@@ -773,7 +950,6 @@ export const warehouseOperations = {
         }
 
         // Calculate new bin state for mixed barcode support
-        const newQtyForSKU = availableQuantityForSKU - quantity;
         let binUpdate = {
           lastPickedAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
@@ -830,8 +1006,8 @@ export const warehouseOperations = {
           }
         }
 
-        // Update bin in database
-        await warehouseService.updateBin(warehouseId, binId, binUpdate);
+        // Update bin in database with operation ID to allow the owning operation to proceed
+        await warehouseService.updateBin(warehouseId, binId, binUpdate, operationId);
 
         const newTotalQty = binUpdate.currentQty;
         const isEmpty = newTotalQty === 0;
@@ -908,6 +1084,15 @@ export const warehouseOperations = {
     } catch (error) {
       console.error('❌ Error executing pick operation:', error);
       throw error;
+    } finally {
+      // STEP 3: Always release bin locks, even if operation failed
+      try {
+        await this.releaseBinsFromPicking(warehouseId, binIds, operationId);
+      } catch (releaseError) {
+        console.error('❌ Error releasing bin locks:', releaseError);
+        // Force release as backup
+        this.forceReleaseAllPickLocks(warehouseId);
+      }
     }
   },
 
@@ -996,13 +1181,22 @@ export const warehouseOperations = {
       const bins = await this.getAllBins(warehouseId);
       console.log('📦 Total bins found:', bins.length);
 
+      // SAFETY CHECK: Exclude bins that are locked for picking operations
+      // This prevents allocation conflicts during active pick operations
+      const lockedBinIds = this.areBinsLockedForPicking(warehouseId, bins.map(b => b.id));
+      const availableBins = bins.filter(bin => !lockedBinIds.lockedBins.includes(bin.id));
+      
+      if (lockedBinIds.locked) {
+        console.log(`⚠️ Excluding ${lockedBinIds.lockedBins.length} bins locked for picking operations:`, lockedBinIds.lockedBins);
+      }
+
       // Create allocation plan
       const allocationPlan = [];
       let remainingQuantity = totalQuantity;
 
       // PHASE 1: Find and use existing bins with the SAME SKU (highest priority)
       // This ensures we consolidate same products first
-      let sameSKUBins = bins.filter(bin => {
+      let sameSKUBins = availableBins.filter(bin => {
         // Must be active, have the same SKU, and have space
         const isActive = (bin.status === 'available' || bin.status === 'occupied');
         const isSameSKU = (bin.sku === sku);
@@ -1042,7 +1236,7 @@ export const warehouseOperations = {
       }      // PHASE 2: Search ALL bins from first to last for available space (Mixed Barcode Strategy)
       // This allows different barcodes to share bins, maximizing space utilization
       if (remainingQuantity > 0) {
-        let availableBins = bins.filter(bin => {
+        let availableBinsForMixed = availableBins.filter(bin => {
           // Must be active and have space, regardless of current SKU
           const isActive = (bin.status === 'available' || bin.status === 'occupied');
           const currentQty = parseInt(bin.currentQty) || 0;
@@ -1060,13 +1254,13 @@ export const warehouseOperations = {
         
         // Log sorting results for debugging
         console.log('📊 Available bins sorted in order:', 
-          availableBins.slice(0, 10).map(bin => 
+          availableBinsForMixed.slice(0, 10).map(bin => 
             `${bin.code} (CurrentSKU: ${bin.sku || 'Empty'}, Space: ${bin.capacity - (parseInt(bin.currentQty) || 0)}/${bin.capacity})`
           ));
         
         // Allocate to available bins in order - fill each to capacity before moving to next
-        console.log(`📦 Phase 2: Available bins for mixed allocation: ${availableBins.length}`);
-        for (const bin of availableBins) {
+        console.log(`📦 Phase 2: Available bins for mixed allocation: ${availableBinsForMixed.length}`);
+        for (const bin of availableBinsForMixed) {
           if (remainingQuantity <= 0) break;
           
           const currentQty = parseInt(bin.currentQty) || 0;

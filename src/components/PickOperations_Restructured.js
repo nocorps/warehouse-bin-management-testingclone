@@ -350,6 +350,7 @@ export default function PickOperations() {
       
       console.log('✅ PHASE 1 COMPLETE: All items are fully available. Proceeding with FIFO execution...');
       console.log('🧠 MIXED BARCODE STRATEGY: Pick plans will be recalculated before each execution to ensure accuracy');
+      console.log('⚠️ NOTE: Some picks may become partial if multiple SKUs share the same bins (mixed bins)');
       setProgress(25);
       
       // PHASE 2: Execute picks for all available items with FIFO logic
@@ -377,9 +378,78 @@ export default function PickOperations() {
             parseInt(safeItem.quantity)
           );
           
-          // Verify the item is still fully available after previous picks
+          // Check if the item is still fully available after previous picks
           if (!freshPickingResult || !freshPickingResult.isFullyAvailable) {
-            throw new Error(`SKU ${safeItem.barcode} no longer fully available. Required: ${safeItem.quantity}, Available: ${freshPickingResult?.totalAvailable || 0}. This occurred due to bin changes during earlier picks.`);
+            // If not fully available, check if we can pick partial quantity
+            const availableQuantity = freshPickingResult?.totalAvailable || 0;
+            
+            if (availableQuantity === 0) {
+              throw new Error(`SKU ${safeItem.barcode} is no longer available. All bins containing this SKU were affected by previous picks in this batch operation.`);
+            } else {
+              console.warn(`⚠️ SKU ${safeItem.barcode} partially available due to shared bins. Required: ${safeItem.quantity}, Available: ${availableQuantity}. Attempting partial pick...`);
+              
+              // Update the pick plan to only pick what's available
+              const partialPickingResult = await warehouseOperations.findProductsForPicking(
+                currentWarehouse.id,
+                safeItem.barcode,
+                availableQuantity
+              );
+              
+              if (!partialPickingResult || !partialPickingResult.isFullyAvailable) {
+                throw new Error(`SKU ${safeItem.barcode} availability changed during partial pick calculation. Required: ${availableQuantity}, Available: ${partialPickingResult?.totalAvailable || 0}.`);
+              }
+              
+              // Execute partial pick
+              const pickedItems = partialPickingResult.pickPlan.map(plan => ({
+                binId: plan.id,
+                quantity: plan.pickQuantity,
+                sku: safeItem.barcode
+              }));
+              
+              // Create temporary pick task ID
+              const tempTaskId = `excel-pick-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+              
+              // Execute the pick with FIFO compliance
+              const pickExecutionResult = await warehouseOperations.executePick(
+                currentWarehouse.id,
+                tempTaskId,
+                pickedItems
+              );
+              
+              if (!pickExecutionResult.success) {
+                throw new Error(pickExecutionResult.message || 'Failed to execute partial pick');
+              }
+              
+              // Add partial result
+              results.push({
+                ...safeItem,
+                status: 'Partial',
+                pickedQuantity: availableQuantity,
+                requestedQuantity: parseInt(safeItem.quantity),
+                shortfall: parseInt(safeItem.quantity) - availableQuantity,
+                location: partialPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
+                locations: partialPickingResult.pickPlan?.map(p => p.code || 'Unknown').join(', ') || 'Unknown',
+                pickedBins: partialPickingResult.pickPlan?.map(p => ({
+                  binId: p.id || 'unknown',
+                  binCode: p.code || 'unknown',
+                  rackCode: p.rackCode || 'unknown',
+                  quantity: p.pickQuantity || 0,
+                  fifoReason: p.fifoReason || 'FIFO',
+                  pickOrder: p.pickOrder || 0,
+                  isMixed: p.isMixed || false,
+                  originalBinSKU: p.originalBinSKU || safeItem.barcode
+                })) || [],
+                executedAt: new Date().toISOString(),
+                availableQty: availableQuantity,
+                pickedQty: availableQuantity,
+                mixedBins: partialPickingResult.pickPlan?.filter(p => p.isMixed).length || 0,
+                fifoCompliant: true,
+                note: `Partial pick due to shared bins with other SKUs. Earlier picks in this batch affected bin availability. Picked ${availableQuantity} of ${safeItem.quantity} requested.`
+              });
+              
+              console.log(`✅ Successfully executed partial pick for ${safeItem.barcode}: ${availableQuantity}/${safeItem.quantity} units from ${partialPickingResult.pickPlan.length} bin(s)`);
+              continue; // Move to next item
+            }
           }
           
           // Execute the pick operations for this item using fresh FIFO pick plan

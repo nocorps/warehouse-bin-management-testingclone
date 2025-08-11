@@ -300,7 +300,20 @@ export const warehouseService = {
     return { id: docRef.id, ...binWithMetadata };
   },
 
-  async updateBin(warehouseId, binId, binData) {
+  async updateBin(warehouseId, binId, binData, allowedOperationId = null) {
+    // Check if this bin update would affect inventory and if pick operations are active
+    // Only check for inventory-related updates (quantity changes)
+    if (binData.hasOwnProperty('currentQty') || binData.hasOwnProperty('sku') || binData.hasOwnProperty('status')) {
+      // Import here to avoid circular dependency
+      const { warehouseOperations } = await import('./warehouseOperations');
+      try {
+        warehouseOperations.validateBinOperationAgainstPickLocks(warehouseId, [binId], 'update', allowedOperationId);
+      } catch (lockError) {
+        // Add context about which operation was blocked
+        throw new Error(`Bin update blocked: ${lockError.message}`);
+      }
+    }
+    
     const binRef = doc(db, 'WHT', warehouseId, 'bins', binId);
     const updateData = {
       ...binData,
@@ -560,7 +573,15 @@ export const warehouseService = {
   },
 
   // Transaction for moving products between bins
-  async moveBetweenBins(warehouseId, fromBinId, toBinId, sku, quantity, lotNumber = null) {
+  async moveBetweenBins(warehouseId, fromBinId, toBinId, sku, quantity, lotNumber = null, allowedOperationId = null) {
+    // Validate that neither bin is locked for picking before starting the transaction
+    const { warehouseOperations } = await import('./warehouseOperations');
+    try {
+      warehouseOperations.validateBinOperationAgainstPickLocks(warehouseId, [fromBinId, toBinId], 'move inventory between', allowedOperationId);
+    } catch (lockError) {
+      throw new Error(`Bin move blocked: ${lockError.message}`);
+    }
+    
     return await runTransaction(db, async (transaction) => {
       // Get current bin states
       const fromBinRef = doc(db, 'WHT', warehouseId, 'bins', fromBinId);
