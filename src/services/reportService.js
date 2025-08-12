@@ -31,6 +31,15 @@ export class ReportService {
     try {
       console.log('📊 Generating report with config:', config);
       
+      // Validate and log date range information
+      if (config.scope === 'date_range') {
+        console.log('🗓️ Date range scope detected:');
+        console.log('- Start Date:', config.startDate);
+        console.log('- End Date:', config.endDate);
+        console.log('- Start Date ISO:', config.startDate instanceof Date ? config.startDate.toISOString() : new Date(config.startDate).toISOString());
+        console.log('- End Date ISO:', config.endDate instanceof Date ? config.endDate.toISOString() : new Date(config.endDate).toISOString());
+      }
+      
       const reportData = {
         config,
         generatedAt: new Date().toISOString(),
@@ -92,10 +101,33 @@ export class ReportService {
       let historyQuery = query(historyRef, orderBy('timestamp', 'asc'));
 
       if (config.scope === 'date_range' && config.startDate && config.endDate) {
+        // Ensure proper date conversion for Firestore timestamp comparison
+        // Handle both Date objects and date strings
+        let startTimestamp, endTimestamp;
+        
+        if (config.startDate instanceof Date) {
+          startTimestamp = config.startDate.toISOString();
+        } else {
+          startTimestamp = new Date(config.startDate).toISOString();
+        }
+        
+        if (config.endDate instanceof Date) {
+          endTimestamp = config.endDate.toISOString();
+        } else {
+          endTimestamp = new Date(config.endDate).toISOString();
+        }
+        
+        console.log('🗓️ Date range filter applied:', {
+          startISO: startTimestamp,
+          endISO: endTimestamp,
+          startDate: new Date(startTimestamp).toLocaleString(),
+          endDate: new Date(endTimestamp).toLocaleString()
+        });
+        
         historyQuery = query(
           historyRef,
-          where('timestamp', '>=', config.startDate.toISOString()),
-          where('timestamp', '<=', config.endDate.toISOString()),
+          where('timestamp', '>=', startTimestamp),
+          where('timestamp', '<=', endTimestamp),
           orderBy('timestamp', 'asc')
         );
         
@@ -105,7 +137,7 @@ export class ReportService {
         
         const preHistoryQuery = query(
           historyRef,
-          where('timestamp', '<', config.startDate.toISOString()),
+          where('timestamp', '<', startTimestamp),
           orderBy('timestamp', 'asc') // Chronological order to build up state
         );
         
@@ -175,6 +207,12 @@ export class ReportService {
 
       const historySnapshot = await getDocs(historyQuery);
       const historyItems = historySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      console.log(`📊 Retrieved ${historyItems.length} operations for date range`);
+      if (historyItems.length > 0) {
+        console.log('📅 First operation timestamp:', historyItems[0].timestamp);
+        console.log('📅 Last operation timestamp:', historyItems[historyItems.length - 1].timestamp);
+      }
 
       // Get warehouse details for better location information
       const warehouseRef = doc(db, 'WHT', warehouseId);
@@ -185,6 +223,10 @@ export class ReportService {
 
       // STEP 1: Process ALL operations in chronological order to build correct inventory levels
       console.log(`📈 Processing ${historyItems.length} operations chronologically...`);
+      
+      if (config.scope === 'date_range') {
+        console.log('🔍 Date range filtering - movements will only include operations within the specified period');
+      }
       
       for (const item of historyItems) {
         if (item.executionDetails && item.executionDetails.items) {
@@ -400,6 +442,18 @@ export class ReportService {
       
       console.log(issuesFound === 0 ? '✅ All inventory flows are correct!' : `❌ Found ${issuesFound} continuity issues`);
 
+      console.log(`📋 Stock movements report generated:`);
+      console.log(`- Total movements: ${movements.length}`);
+      console.log(`- Put-Away operations: ${movements.filter(m => m.operationType === 'Put-Away').length}`);
+      console.log(`- Pick operations: ${movements.filter(m => m.operationType === 'Pick').length}`);
+      
+      if (config.scope === 'date_range') {
+        console.log(`- Date range: ${config.startDate} to ${config.endDate}`);
+        if (movements.length === 0) {
+          console.warn('⚠️ No movements found in the specified date range. Check if operations exist for these dates.');
+        }
+      }
+
       return {
         movements,
         summary: {
@@ -429,11 +483,39 @@ export class ReportService {
       const binsSnapshot = await getDocs(binsRef);
       const bins = binsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // Group by SKU
-      const inventory = new Map();
+      // Create individual inventory records for each bin (not grouped by SKU)
+      const inventory = [];
       
       bins.forEach(bin => {
-        if (bin.currentQty > 0 && bin.sku) {
+        // Check if this bin has mixed contents (multiple SKUs in one bin)
+        if (bin.mixedContents && Array.isArray(bin.mixedContents) && bin.mixedContents.length > 0) {
+          // For mixed bins, create separate entry for each SKU
+          bin.mixedContents.forEach(content => {
+            if (content.quantity > 0 && content.sku) {
+              // Apply SKU filtering if selectedSkus is provided
+              if (config.selectedSkus && config.selectedSkus.length > 0) {
+                if (!config.selectedSkus.includes(content.sku)) {
+                  return; // Skip this SKU if not in the selected list
+                }
+              }
+              
+              // Create individual entry for each SKU in mixed bin
+              inventory.push({
+                sku: content.sku,
+                barcode: content.sku, // Use barcode field for consistency
+                location: bin.code,
+                binCode: bin.code,
+                rackCode: bin.rackCode,
+                quantity: parseInt(content.quantity) || 0,
+                lotNumber: content.lotNumber,
+                expiryDate: content.expiryDate,
+                status: 'Current Stock'
+              });
+            }
+          });
+        }
+        // For pure bins (single SKU), use the original logic
+        else if (bin.currentQty > 0 && bin.sku) {
           // Apply SKU filtering if selectedSkus is provided
           if (config.selectedSkus && config.selectedSkus.length > 0) {
             if (!config.selectedSkus.includes(bin.sku)) {
@@ -441,39 +523,44 @@ export class ReportService {
             }
           }
           
-          if (inventory.has(bin.sku)) {
-            const existing = inventory.get(bin.sku);
-            existing.totalQuantity += parseInt(bin.currentQty) || 0;
-            existing.locations.push({
-              binCode: bin.code,
-              rackCode: bin.rackCode,
-              quantity: bin.currentQty,
-              lotNumber: bin.lotNumber,
-              expiryDate: bin.expiryDate
-            });
-          } else {
-            inventory.set(bin.sku, {
-              sku: bin.sku,
-              totalQuantity: parseInt(bin.currentQty) || 0,
-              locations: [{
-                binCode: bin.code,
-                rackCode: bin.rackCode,
-                quantity: bin.currentQty,
-                lotNumber: bin.lotNumber,
-                expiryDate: bin.expiryDate
-              }]
-            });
-          }
+          // Create individual entry for pure bin
+          inventory.push({
+            sku: bin.sku,
+            barcode: bin.sku, // Use barcode field for consistency
+            location: bin.code,
+            binCode: bin.code,
+            rackCode: bin.rackCode,
+            quantity: parseInt(bin.currentQty) || 0,
+            lotNumber: bin.lotNumber,
+            expiryDate: bin.expiryDate,
+            status: 'Current Stock'
+          });
         }
       });
 
-      const inventoryArray = Array.from(inventory.values());
+      // Sort by SKU/barcode, then by location for consistent display
+      inventory.sort((a, b) => {
+        const skuCompare = (a.sku || '').localeCompare(b.sku || '');
+        if (skuCompare !== 0) return skuCompare;
+        return (a.location || '').localeCompare(b.location || '');
+      });
+
+      console.log(`📦 Inventory summary report generated:`);
+      console.log(`- Total inventory rows: ${inventory.length}`);
+      console.log(`- Unique SKUs: ${new Set(inventory.map(item => item.sku)).size}`);
+      console.log(`- Total bins queried: ${bins.length}`);
+      console.log(`- Occupied bins: ${bins.filter(bin => bin.currentQty > 0).length}`);
+      
+      if (config.selectedSkus && config.selectedSkus.length > 0) {
+        console.log(`- SKU filtering applied: ${config.selectedSkus.length} SKUs selected`);
+      }
 
       return {
-        inventory: inventoryArray,
+        inventory,
         summary: {
-          totalSkus: inventoryArray.length,
-          totalQuantity: inventoryArray.reduce((sum, item) => sum + item.totalQuantity, 0),
+          totalRows: inventory.length,
+          totalSkus: new Set(inventory.map(item => item.sku)).size,
+          totalQuantity: inventory.reduce((sum, item) => sum + item.quantity, 0),
           totalBinsOccupied: bins.filter(bin => bin.currentQty > 0).length,
           totalBinsAvailable: bins.filter(bin => (bin.capacity - (bin.currentQty || 0)) > 0).length,
           utilizationRate: bins.length > 0 ? (bins.filter(bin => bin.currentQty > 0).length / bins.length * 100).toFixed(1) : 0
@@ -501,11 +588,27 @@ export class ReportService {
       );
 
       if (config.scope === 'date_range' && config.startDate && config.endDate) {
+        let startTimestamp, endTimestamp;
+        
+        if (config.startDate instanceof Date) {
+          startTimestamp = config.startDate.toISOString();
+        } else {
+          startTimestamp = new Date(config.startDate).toISOString();
+        }
+        
+        if (config.endDate instanceof Date) {
+          endTimestamp = config.endDate.toISOString();
+        } else {
+          endTimestamp = new Date(config.endDate).toISOString();
+        }
+        
+        console.log('🔧 Putaway date filter:', { startTimestamp, endTimestamp });
+        
         historyQuery = query(
           historyRef,
           where('operationType', '==', 'putaway'),
-          where('timestamp', '>=', config.startDate.toISOString()),
-          where('timestamp', '<=', config.endDate.toISOString()),
+          where('timestamp', '>=', startTimestamp),
+          where('timestamp', '<=', endTimestamp),
           orderBy('timestamp', 'desc')
         );
       }
@@ -590,11 +693,27 @@ export class ReportService {
       );
 
       if (config.scope === 'date_range' && config.startDate && config.endDate) {
+        let startTimestamp, endTimestamp;
+        
+        if (config.startDate instanceof Date) {
+          startTimestamp = config.startDate.toISOString();
+        } else {
+          startTimestamp = new Date(config.startDate).toISOString();
+        }
+        
+        if (config.endDate instanceof Date) {
+          endTimestamp = config.endDate.toISOString();
+        } else {
+          endTimestamp = new Date(config.endDate).toISOString();
+        }
+        
+        console.log('🎯 Pick date filter:', { startTimestamp, endTimestamp });
+        
         historyQuery = query(
           historyRef,
           where('operationType', '==', 'pick'),
-          where('timestamp', '>=', config.startDate.toISOString()),
-          where('timestamp', '<=', config.endDate.toISOString()),
+          where('timestamp', '>=', startTimestamp),
+          where('timestamp', '<=', endTimestamp),
           orderBy('timestamp', 'desc')
         );
       }
@@ -889,119 +1008,19 @@ export class ReportService {
             }
           });
         } else if (reportData.data.inventory) {
-          // For inventory summary reports
+          // For inventory summary reports - each item is now a single bin location
           reportData.data.inventory.forEach(item => {
-            const barcode = item.sku || 'N/A';
+            const barcode = item.barcode || item.sku || 'N/A';
+            const location = item.location || item.binCode || 'N/A';
+            const quantity = item.quantity || 0;
+            const status = item.status || 'Current Stock';
             
-            if (Array.isArray(item.binDetails) && item.binDetails.length > 0) {
-              // If we have detailed bin info
-              item.binDetails.forEach(bin => {
-                reportRows.push([
-                  barcode,
-                  bin.binCode || bin.location || 'N/A',
-                  bin.quantity || 0,
-                  'Current Stock'
-                ]);
-              });
-            } else if (Array.isArray(item.locations) && item.locations.length > 0) {
-              // For array of location objects
-              const totalQty = item.totalQuantity || 0;
-              const baseQtyPerBin = Math.floor(totalQty / item.locations.length);
-              const remainder = totalQty % item.locations.length;
-              
-              // Create individual atomic rows for each location only
-              item.locations.forEach((loc, index) => {
-                const locationStr = typeof loc === 'object' ? (loc.binCode || 'N/A') : (loc || 'N/A');
-                const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
-                
-                reportRows.push([
-                  barcode,
-                  locationStr,
-                  binQty,
-                  'Current Stock'
-                ]);
-              });
-            } else if (typeof item.locations === 'string') {
-              // Process location string
-              let locations = [];
-              
-              if (item.locations.includes('-') && item.locations.split('-').length > 5) {
-                // Process potential multi-bin pattern with dashes
-                const parts = item.locations.split('-');
-                let locationParts = [];
-                let currentLocation = [];
-                
-                // Start with the first part
-                currentLocation.push(parts[0]);
-                
-                // Look for warehouse patterns
-                for (let i = 1; i < parts.length; i++) {
-                  if (parts[i].match(/^WH\d+$/)) {
-                    locationParts.push(currentLocation.join('-'));
-                    currentLocation = [parts[i]];
-                  } else {
-                    currentLocation.push(parts[i]);
-                  }
-                }
-                
-                // Add the last location
-                if (currentLocation.length > 0) {
-                  locationParts.push(currentLocation.join('-'));
-                }
-                
-                // Use the parsed locations if we found multiple
-                if (locationParts.length > 1) {
-                  locations = locationParts;
-                } else if (item.locations.includes(',')) {
-                  // Fall back to comma splitting
-                  locations = item.locations.split(',').map(loc => loc.trim());
-                } else {
-                  // Single location
-                  locations = [item.locations];
-                }
-              } else if (item.locations.includes(',')) {
-                // Location already has commas
-                locations = item.locations.split(',').map(loc => loc.trim());
-              } else {
-                // Single location
-                locations = [item.locations];
-              }
-              
-              const totalQty = item.totalQuantity || 0;
-              
-              // Add individual rows for multiple locations
-              if (locations.length > 1) {
-                const baseQtyPerBin = Math.floor(totalQty / locations.length);
-                const remainder = totalQty % locations.length;
-                
-                // Create individual atomic rows for each location only
-                locations.forEach((location, index) => {
-                  const binQty = index === 0 ? baseQtyPerBin + remainder : baseQtyPerBin;
-                  reportRows.push([
-                    barcode,
-                    location,
-                    binQty,
-                    'Current Stock'
-                  ]);
-                });
-              } else {
-                // Single location
-                reportRows.push([
-                  barcode,
-                  locations[0],
-                  totalQty,
-                  'Current Stock'
-                ]);
-              }
-            } else {
-              // Fallback for any other case
-              reportRows.push([
-                barcode,
-                'N/A',
-                item.totalQuantity || 0,
-                'Current Stock'
-              ]);
-            }
+            reportRows.push([
+              barcode,
+              location,
+              quantity,
+              status
+            ]);
           });
         }
         

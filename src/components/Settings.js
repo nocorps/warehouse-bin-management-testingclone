@@ -86,7 +86,7 @@ function TabPanel({ children, value, index, ...other }) {
 
 export default function Settings() {
   const { currentWarehouse } = useWarehouse();
-  const { showSuccess, showError } = useNotification();
+  const { showSuccess, showError, showInfo } = useNotification();
   
   const [tabValue, setTabValue] = useState(0);
   
@@ -126,6 +126,13 @@ export default function Settings() {
     loadBackups();
     initializeAutoBackup();
   }, [currentWarehouse]);
+
+  // Reset report scope when changing report type - inventory summary only supports 'full'
+  useEffect(() => {
+    if (reportType === 'inventory_summary' && reportScope !== 'full') {
+      setReportScope('full');
+    }
+  }, [reportType, reportScope]);
 
   const loadBackups = async () => {
     if (!currentWarehouse?.id) return;
@@ -238,8 +245,29 @@ export default function Settings() {
       const now = new Date();
       switch (reportScope) {
         case 'date_range':
-          calculatedStartDate = startDate;
-          calculatedEndDate = endDate;
+          // Validate date range before proceeding
+          if (!startDate || !endDate) {
+            showError('Please select both start and end dates for date range reports.');
+            setReportGenerating(false);
+            return;
+          }
+          
+          if (startDate > endDate) {
+            showError('Start date must be before or equal to end date.');
+            setReportGenerating(false);
+            return;
+          }
+          
+          // Ensure proper date range handling with timezone considerations
+          // Create dates at start of day (00:00:00) and end of day (23:59:59) in local timezone
+          calculatedStartDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
+          calculatedEndDate = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+          
+          console.log('📅 Date range selected:', {
+            original: { start: startDate, end: endDate },
+            calculated: { start: calculatedStartDate, end: calculatedEndDate },
+            iso: { start: calculatedStartDate.toISOString(), end: calculatedEndDate.toISOString() }
+          });
           break;
         case 'last_week':
           calculatedStartDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -286,6 +314,32 @@ export default function Settings() {
       console.log('📊 Generating report with config:', reportConfig);
 
       const report = await reportService.generateReport(reportConfig);
+      
+      // Check if report has no data and show helpful message
+      if (report.data) {
+        let isEmpty = false;
+        let itemCount = 0;
+        
+        if (report.data.movements) {
+          itemCount = report.data.movements.length;
+          isEmpty = itemCount === 0;
+        } else if (report.data.inventory) {
+          itemCount = report.data.inventory.length;
+          isEmpty = itemCount === 0;
+        } else if (report.data.operations) {
+          itemCount = report.data.operations.length;
+          isEmpty = itemCount === 0;
+        }
+        
+        if (isEmpty && reportScope === 'date_range') {
+          console.warn(`⚠️ Empty report generated for date range: ${calculatedStartDate?.toLocaleDateString()} - ${calculatedEndDate?.toLocaleDateString()}`);
+          showInfo(`Report generated but contains no data for the selected date range (${calculatedStartDate?.toLocaleDateString()} - ${calculatedEndDate?.toLocaleDateString()}). Try expanding the date range or check if operations exist for these dates.`);
+        } else if (isEmpty) {
+          showInfo(`Report generated but contains no data. This may be normal if no operations have been performed yet.`);
+        }
+        
+        console.log(`📊 Report generated with ${itemCount} items`);
+      }
       
       switch (reportFormat) {
         case 'excel':
@@ -596,8 +650,16 @@ export default function Settings() {
 
   const getScopeDetails = (scope) => {
     switch (scope) {
-      case 'full': return 'Includes all historical data from warehouse creation to current date. Comprehensive view of all activities.';
-      case 'date_range': return 'Custom date range allows you to focus on specific time periods for targeted analysis.';
+      case 'full': 
+        if (reportType === 'inventory_summary') {
+          return 'Comprehensive inventory snapshot including all items, locations, and current stock levels. Inventory reports always show the complete current state.';
+        }
+        return 'Includes all historical data from warehouse creation to current date. Comprehensive view of all activities.';
+      case 'date_range': 
+        if (reportType === 'stock_movements') {
+          return 'Custom date range allows you to focus on specific time periods for targeted stock movement analysis. Perfect for tracking activities during specific periods.';
+        }
+        return 'Custom date range allows you to focus on specific time periods for targeted analysis.';
       case 'current': return 'Real-time snapshot of current warehouse status without historical data.';
       case 'last_week': return 'Focus on recent activity from the last 7 days for short-term analysis.';
       case 'last_month': return 'Monthly view covering the last 30 days of warehouse operations.';
@@ -872,7 +934,10 @@ export default function Settings() {
                             onChange={(e) => setReportScope(e.target.value)}
                           >
                             <MenuItem value="full">📋 Full Report (All Data)</MenuItem>
-                            <MenuItem value="date_range">📅 Date Range (Between Dates)</MenuItem>
+                            {/* Only show date range option for stock movements, not for inventory summary */}
+                            {reportType === 'stock_movements' && (
+                              <MenuItem value="date_range">📅 Date Range (Between Dates)</MenuItem>
+                            )}
                             {/* <MenuItem value="current">� Current Status Only</MenuItem>
                             <MenuItem value="last_week">📊 Last 7 Days</MenuItem>
                             <MenuItem value="last_month">� Last 30 Days</MenuItem>
@@ -893,7 +958,12 @@ export default function Settings() {
                               type="date"
                               label="Start Date"
                               value={startDate ? startDate.toISOString().split('T')[0] : ''}
-                              onChange={(e) => setStartDate(new Date(e.target.value))}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const [year, month, day] = e.target.value.split('-');
+                                  setStartDate(new Date(parseInt(year), parseInt(month) - 1, parseInt(day)));
+                                }
+                              }}
                               InputLabelProps={{ shrink: true }}
                             />
                           </Grid>
@@ -903,7 +973,12 @@ export default function Settings() {
                               type="date"
                               label="End Date"
                               value={endDate ? endDate.toISOString().split('T')[0] : ''}
-                              onChange={(e) => setEndDate(new Date(e.target.value))}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const [year, month, day] = e.target.value.split('-');
+                                  setEndDate(new Date(parseInt(year), parseInt(month) - 1, parseInt(day)));
+                                }
+                              }}
                               InputLabelProps={{ shrink: true }}
                             />
                           </Grid>
@@ -978,6 +1053,16 @@ export default function Settings() {
                           <Typography variant="body2">
                             {getScopeDetails(reportScope)}
                           </Typography>
+                        </Alert>
+                      </Grid>
+
+                      {/* Info about scope restrictions for different report types */}
+                      <Grid item xs={12}>
+                        <Alert severity="info" sx={{ mt: 1 }}>
+                          {reportType === 'inventory_summary' 
+                            ? '📊 Inventory Summary reports always show the complete current state of all items. Date range filtering is not applicable for inventory snapshots.'
+                            : '📈 Stock Movement reports support both full historical data and custom date range filtering for focused analysis of specific time periods.'
+                          }
                         </Alert>
                       </Grid>
                     </Grid>

@@ -1,6 +1,6 @@
 {
   "name": "warehouse-bin-management",
-  "version": "2.0.1",
+  "version": "2.8.1",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.14.0",

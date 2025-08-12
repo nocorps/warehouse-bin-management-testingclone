@@ -734,11 +734,7 @@ export class PrintService {
 
         ${includeDetails && movements.length > 0 ? `
         <div class="movement-details">
-          <h2>Movement Details (${
-            reportData.config.scope === 'full' || movements.length <= 100 
-              ? `${movements.length} movements` 
-              : `First 100 of ${movements.length} movements`
-          })</h2>
+          <h2>Movement Details (${movements.length} movements)</h2>
           <table class="items-table">
             <thead>
               <tr>
@@ -749,7 +745,7 @@ export class PrintService {
               </tr>
             </thead>
             <tbody>
-              ${(reportData.config.scope === 'full' ? movements : movements.slice(0, 100)).map(movement => `
+              ${movements.map(movement => `
                 <tr>
                   <td><strong>${movement.sku}</strong></td>
                   <td>${movement.location}</td>
@@ -761,10 +757,6 @@ export class PrintService {
               `).join('')}
             </tbody>
           </table>
-          ${movements.length > 100 && reportData.config.scope !== 'full' ? 
-            `<p class="note">Note: Only the first 100 movements are shown. Download the full report for complete data.</p>` : 
-            ''
-          }
         </div>
         ` : ''}
 
@@ -2161,7 +2153,7 @@ export class PrintService {
             <h2>📊 Summary</h2>
             <div class="summary-grid">
               <div class="summary-item">
-                <span class="label">Total SKUs:</span>
+                <span class="label">Total Barcodes:</span>
                 <span class="value">${summary.totalSkus || 0}</span>
               </div>
               <div class="summary-item">
@@ -2184,34 +2176,21 @@ export class PrintService {
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>SKU</th>
+                  <th>Barcode</th>
                   <th>Location</th>
                   <th>Quantity</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                ${inventory.map(item => {
-                  if (item.locations && Array.isArray(item.locations)) {
-                    return item.locations.map(loc => `
-                      <tr>
-                        <td>${item.sku || 'N/A'}</td>
-                        <td>${loc.binCode || 'N/A'}</td>
-                        <td>${loc.quantity || 0}</td>
-                        <td>Current Stock</td>
-                      </tr>
-                    `).join('');
-                  } else {
-                    return `
-                      <tr>
-                        <td>${item.sku || 'N/A'}</td>
-                        <td>N/A</td>
-                        <td>${item.totalQuantity || 0}</td>
-                        <td>Current Stock</td>
-                      </tr>
-                    `;
-                  }
-                }).join('')}
+                ${inventory.map(item => `
+                  <tr>
+                    <td>${item.barcode || item.sku || 'N/A'}</td>
+                    <td>${item.location || item.binCode || 'N/A'}</td>
+                    <td>${item.quantity || 0}</td>
+                    <td>${item.status || 'Current Stock'}</td>
+                  </tr>
+                `).join('')}
               </tbody>
             </table>
           </div>

@@ -386,6 +386,47 @@ export class ExcelService {
   }
 
   /**
+   * Generate Excel report for inventory
+   */
+  async generateInventoryReport(reportData) {
+    try {
+      if (!reportData || !reportData.data || !reportData.data.inventory || !Array.isArray(reportData.data.inventory) || reportData.data.inventory.length === 0) {
+        throw new Error('No valid inventory data to report');
+      }
+
+      const workbook = XLSX.utils.book_new();
+      
+      // Simple data with only barcode, location, quantity, and status
+      const reportRows = [
+        ['Barcode', 'Location', 'Quantity', 'Status']
+      ];
+
+      // Each inventory item is already a single bin record
+      reportData.data.inventory.forEach(item => {
+        reportRows.push([
+          item.barcode || item.sku || '',
+          item.location || item.binCode || '',
+          item.quantity || 0,
+          item.status || 'Current Stock'
+        ]);
+      });
+
+      const reportSheet = XLSX.utils.aoa_to_sheet(reportRows);
+      XLSX.utils.book_append_sheet(workbook, reportSheet, 'Inventory Report');
+
+      // Generate and download
+      const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `inventory-report-${new Date().getTime()}.xlsx`);
+      
+      return true;
+    } catch (error) {
+      console.error('Error generating inventory report:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Find column index by possible header names
    */
   findColumnIndex(headers, possibleNames) {
