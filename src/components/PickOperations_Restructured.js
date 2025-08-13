@@ -660,6 +660,27 @@ export default function PickOperations() {
     }
   };
 
+  const generatePrintReport = async () => {
+    if (!executionResults || !executionResults.summary || !executionResults.items) {
+      showError('No execution results to print');
+      return false;
+    }
+    
+    try {
+      // Generate print-friendly HTML using the excelService
+      const printHTML = excelService.generatePickPrintReport(executionResults);
+      
+      // Open print preview
+      excelService.printReport(printHTML);
+      
+      return true;
+    } catch (error) {
+      console.error('Error generating print report:', error);
+      showError('Failed to generate print report');
+      return false;
+    }
+  };
+
   const generatePDFReport = async () => {
     try {
       if (!executionResults || !executionResults.summary || !executionResults.items) {
@@ -751,8 +772,8 @@ export default function PickOperations() {
           break;
         
         case 'print':
-          await printService.printSimplePickReport(executionResults);
-          showSuccess('Report sent to printer');
+          await generatePrintReport();
+          showSuccess('Print preview opened');
           break;
         
         default:
@@ -1084,8 +1105,9 @@ export default function PickOperations() {
                       <TableCell>Date</TableCell>
                       <TableCell>File</TableCell>
                       <TableCell>Items</TableCell>
+                      <TableCell>Total Qty</TableCell>
                       <TableCell>Success</TableCell>
-                      <TableCell>Partial</TableCell>
+                      {/* <TableCell>Partial</TableCell> */}
                       <TableCell>Actions</TableCell>
                     </TableRow>
                   </TableHead>
@@ -1100,6 +1122,12 @@ export default function PickOperations() {
                         <TableCell>{historyItem.fileName}</TableCell>
                         <TableCell>{historyItem.totalItems}</TableCell>
                         <TableCell>
+                          {historyItem.executionDetails?.items ? 
+                            historyItem.executionDetails.items.reduce((sum, item) => sum + (parseInt(item.quantity) || 0), 0) : 
+                            'N/A'
+                          }
+                        </TableCell>
+                        <TableCell>
                           <Chip 
                             size="small"
                             label={`${historyItem.successCount}/${historyItem.totalItems}`}
@@ -1107,7 +1135,7 @@ export default function PickOperations() {
                                   historyItem.successCount > 0 ? "warning" : "error"}
                           />
                         </TableCell>
-                        <TableCell>
+                        {/* <TableCell>
                           {historyItem.partialCount > 0 && (
                             <Chip 
                               size="small"
@@ -1115,7 +1143,7 @@ export default function PickOperations() {
                               color="warning"
                             />
                           )}
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell>
                           <ButtonGroup size="small">
                             <Tooltip title="View Details">
@@ -1136,7 +1164,7 @@ export default function PickOperations() {
                                 <RefreshIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
-                            <Tooltip title="Delete">
+                            {/* <Tooltip title="Delete">
                               <IconButton 
                                 size="small" 
                                 color="error"
@@ -1144,7 +1172,7 @@ export default function PickOperations() {
                               >
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
-                            </Tooltip>
+                            </Tooltip> */}
                           </ButtonGroup>
                         </TableCell>
                       </TableRow>

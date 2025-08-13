@@ -699,16 +699,16 @@ export default function Settings() {
             aria-label="settings tabs"
             variant="fullWidth"
           >
-            <Tab icon={<BackupIcon />} label="Backup & Restore" />
+            {/* <Tab icon={<BackupIcon />} label="Backup & Restore" /> */}
             <Tab icon={<ReportIcon />} label="Report Generation" />
             <Tab icon={<DeleteIcon />} label="Delete Warehouse" />
           </Tabs>
 
-          {/* Backup & Restore Tab */}
-          <TabPanel value={tabValue} index={0}>
+          {/* Backup & Restore Tab - DISABLED */}
+          {/* <TabPanel value={tabValue} index={0}>
             <Grid container spacing={3}>
               {/* Auto Backup Settings */}
-              <Grid item xs={12}>
+              {/* <Grid item xs={12}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
@@ -728,10 +728,10 @@ export default function Settings() {
                     </Typography>
                   </CardContent>
                 </Card>
-              </Grid>
+              </Grid> */}
 
               {/* Manual Backup */}
-              <Grid item xs={12} md={6}>
+              {/* <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
@@ -751,10 +751,10 @@ export default function Settings() {
                     </Button>
                   </CardContent>
                 </Card>
-              </Grid>
+              </Grid> */}
 
               {/* Restore */}
-              <Grid item xs={12} md={6}>
+              {/* <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
@@ -774,10 +774,10 @@ export default function Settings() {
                     </Button>
                   </CardContent>
                 </Card>
-              </Grid>
+              </Grid> */}
 
               {/* Upload Backup */}
-              <Grid item xs={12} md={6}>
+              {/* <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
@@ -815,10 +815,10 @@ export default function Settings() {
                     )}
                   </CardContent>
                 </Card>
-              </Grid>
+              </Grid> */}
 
               {/* Backup List */}
-              <Grid item xs={12}>
+              {/* <Grid item xs={12}>
                 <Card>
                   <CardContent>
                     <Typography variant="h6" gutterBottom>
@@ -884,12 +884,12 @@ export default function Settings() {
                     )}
                   </CardContent>
                 </Card>
-              </Grid>
-            </Grid>
-          </TabPanel>
+              </Grid> */}
+            {/* </Grid>
+          </TabPanel> */}
 
           {/* Report Generation Tab */}
-          <TabPanel value={tabValue} index={1}>
+          <TabPanel value={tabValue} index={0}>
             <Grid container spacing={3}>
               {/* Enhanced Report Configuration */}
               <Grid item xs={12} md={8}>
@@ -1260,7 +1260,7 @@ export default function Settings() {
           </TabPanel>
 
           {/* Delete Warehouse Tab */}
-          <TabPanel value={tabValue} index={2}>
+          <TabPanel value={tabValue} index={1}>
             <Grid container spacing={3}>
               <Grid item xs={12}>
                 <Alert severity="error" sx={{ mb: 3 }}>

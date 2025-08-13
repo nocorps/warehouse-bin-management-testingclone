@@ -25,6 +25,117 @@ export class ReportService {
   }
 
   /**
+   * Sort locations in warehouse order (R01-G01-A1, R01-G01-B1, R01-G01-C1, R01-G01-A2, etc.)
+   */
+  sortLocationData(reportData) {
+    // Keep header row separate
+    const header = reportData[0];
+    const dataRows = reportData.slice(1);
+    
+    // Sort data rows by location
+    dataRows.sort((a, b) => {
+      const locationA = a[1] || ''; // Location is in column index 1
+      const locationB = b[1] || '';
+      return this.compareLocations(locationA, locationB);
+    });
+    
+    return [header, ...dataRows];
+  }
+
+  /**
+   * Compare two location strings for sorting
+   */
+  compareLocations(locA, locB) {
+    // Handle empty/invalid locations
+    if (!locA || locA === 'N/A') return 1;
+    if (!locB || locB === 'N/A') return -1;
+    
+    // Parse location components
+    const partsA = this.parseLocationParts(locA);
+    const partsB = this.parseLocationParts(locB);
+    
+    // Compare each component in order: row, grid, shelf
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      const partA = partsA[i] || '';
+      const partB = partsB[i] || '';
+      
+      if (partA !== partB) {
+        // Special handling for the last component (shelf like A1, B1, C1, etc.)
+        if (i === partsA.length - 1 || i === partsB.length - 1) {
+          return this.compareShelfCodes(partA, partB);
+        }
+        
+        // For other components, try numeric comparison first
+        const numA = this.extractNumber(partA);
+        const numB = this.extractNumber(partB);
+        
+        if (numA !== null && numB !== null) {
+          return numA - numB;
+        }
+        
+        return partA.localeCompare(partB);
+      }
+    }
+    
+    return 0;
+  }
+
+  /**
+   * Compare shelf codes in warehouse order (A1, B1, C1, D1, E1, F1, A2, B2, C2, etc.)
+   */
+  compareShelfCodes(shelfA, shelfB) {
+    // Extract letter and number from shelf codes
+    const parseShelf = (shelf) => {
+      const match = shelf.match(/^([A-Z])(\d+)$/);
+      if (match) {
+        return {
+          letter: match[1],
+          number: parseInt(match[2])
+        };
+      }
+      return { letter: shelf, number: 0 };
+    };
+
+    const parsedA = parseShelf(shelfA);
+    const parsedB = parseShelf(shelfB);
+
+    // First compare by number (level), then by letter (shelf)
+    if (parsedA.number !== parsedB.number) {
+      return parsedA.number - parsedB.number;
+    }
+
+    // Same level, compare by letter
+    return parsedA.letter.localeCompare(parsedB.letter);
+  }
+
+  /**
+   * Parse location string into components for sorting
+   */
+  parseLocationParts(location) {
+    // Clean and standardize location format
+    let cleanLocation = location.trim();
+    
+    // Remove warehouse prefix if present (WH1-, WH01-, etc.)
+    cleanLocation = cleanLocation.replace(/^WH\d*-/, '');
+    
+    // Remove ground floor prefix if present
+    cleanLocation = cleanLocation.replace(/^GF-/, '');
+    
+    // Split by dash and filter out empty parts
+    const parts = cleanLocation.split('-').filter(part => part.length > 0);
+    
+    return parts;
+  }
+
+  /**
+   * Extract numeric value from a string for comparison
+   */
+  extractNumber(str) {
+    const match = str.match(/\d+/);
+    return match ? parseInt(match[0]) : null;
+  }
+
+  /**
    * Generate report based on configuration
    */
   async generateReport(config) {
@@ -919,7 +1030,10 @@ export class ReportService {
           ]);
         });
         
-        const movementSheet = XLSX.utils.aoa_to_sheet(movementRows);
+        // Sort the movement data by location
+        const sortedMovementRows = this.sortLocationData(movementRows);
+        
+        const movementSheet = XLSX.utils.aoa_to_sheet(sortedMovementRows);
         XLSX.utils.book_append_sheet(workbook, movementSheet, 'Stock Movements');
       } else {
         // For all other report types, use a simplified approach without summary sheet
@@ -1024,7 +1138,10 @@ export class ReportService {
           });
         }
         
-        const reportSheet = XLSX.utils.aoa_to_sheet(reportRows);
+        // Sort the report data by location
+        const sortedReportRows = this.sortLocationData(reportRows);
+        
+        const reportSheet = XLSX.utils.aoa_to_sheet(sortedReportRows);
         XLSX.utils.book_append_sheet(workbook, reportSheet, 'Report Data');
       }
 

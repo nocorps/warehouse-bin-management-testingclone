@@ -478,8 +478,8 @@ export default function PutAwayOperations() {
           break;
         
         case 'print':
-          await printService.printSimplePutAwayReport(executionResults);
-          showSuccess('Report sent to printer');
+          await generatePrintReport();
+          showSuccess('Print preview opened');
           break;
         
         default:
@@ -503,6 +503,27 @@ export default function PutAwayOperations() {
     } catch (error) {
       console.error('Error generating Excel report:', error);
       showError('Failed to generate Excel report');
+      return false;
+    }
+  };
+
+  const generatePrintReport = async () => {
+    if (!executionResults || !executionResults.summary || !executionResults.items) {
+      showError('No execution results to print');
+      return false;
+    }
+    
+    try {
+      // Generate print-friendly HTML using the excelService
+      const printHTML = excelService.generatePutawayPrintReport(executionResults);
+      
+      // Open print preview
+      excelService.printReport(printHTML);
+      
+      return true;
+    } catch (error) {
+      console.error('Error generating print report:', error);
+      showError('Failed to generate print report');
       return false;
     }
   };
@@ -922,8 +943,9 @@ export default function PutAwayOperations() {
                       <TableCell>Date</TableCell>
                       <TableCell>File</TableCell>
                       <TableCell>Items</TableCell>
+                      <TableCell>Total Qty</TableCell>
                       <TableCell>Success</TableCell>
-                      <TableCell>Auto-Created</TableCell>
+                      {/* <TableCell>Auto-Created</TableCell> */}
                       <TableCell>Actions</TableCell>
                     </TableRow>
                   </TableHead>
@@ -938,13 +960,19 @@ export default function PutAwayOperations() {
                         <TableCell>{historyItem.fileName}</TableCell>
                         <TableCell>{historyItem.totalItems}</TableCell>
                         <TableCell>
+                          {historyItem.executionDetails?.items ? 
+                            historyItem.executionDetails.items.reduce((sum, item) => sum + (parseInt(item.quantity) || 0), 0) : 
+                            'N/A'
+                          }
+                        </TableCell>
+                        <TableCell>
                           <Chip 
                             size="small"
                             label={`${historyItem.successCount}/${historyItem.totalItems}`}
                             color={historyItem.successCount === historyItem.totalItems ? "success" : "warning"}
                           />
                         </TableCell>
-                        <TableCell>
+                        {/* <TableCell>
                           {historyItem.autoCreatedBins > 0 && (
                             <Chip 
                               size="small"
@@ -952,7 +980,7 @@ export default function PutAwayOperations() {
                               color="info"
                             />
                           )}
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell>
                           <ButtonGroup size="small">
                             <Tooltip title="View Details">
@@ -964,7 +992,7 @@ export default function PutAwayOperations() {
                                 <VisibilityIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
-                            <Tooltip title="Delete">
+                            {/* <Tooltip title="Delete">
                               <IconButton 
                                 size="small" 
                                 color="error"
@@ -972,7 +1000,7 @@ export default function PutAwayOperations() {
                               >
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
-                            </Tooltip>
+                            </Tooltip> */}
                           </ButtonGroup>
                         </TableCell>
                       </TableRow>

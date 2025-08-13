@@ -1078,8 +1078,8 @@ function RackDetailsDialog({ open, onClose, rack, bins }) {
                           <TableCell>Capacity</TableCell>
                           <TableCell>Utilization</TableCell>
                           <TableCell>SKU</TableCell>
-                          <TableCell>Lot</TableCell>
-                          <TableCell>Expiry</TableCell>
+                          {/* <TableCell>Lot</TableCell>
+                          <TableCell>Expiry</TableCell> */}
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -1129,8 +1129,8 @@ function RackDetailsDialog({ open, onClose, rack, bins }) {
                                 </Box>
                               </TableCell>
                               <TableCell>{bin.sku || '-'}</TableCell>
-                              <TableCell>{bin.lotNumber || '-'}</TableCell>
-                              <TableCell>{bin.expiryDate ? new Date(bin.expiryDate).toLocaleDateString() : '-'}</TableCell>
+                              {/* <TableCell>{bin.lotNumber || '-'}</TableCell>
+                              <TableCell>{bin.expiryDate ? new Date(bin.expiryDate).toLocaleDateString() : '-'}</TableCell> */}
                             </TableRow>
                           );
                         })}

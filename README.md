@@ -261,3 +261,17 @@ For questions or support:
 in settings report generation
 show all the report type and report scope.
 every report type needed like this stockmovements(complete) and fullreport(all scope)
+
+
+
+
+
+
+
+
+
+
+
+///Paper size 79mm length
+
+stockmovements pick (-)
